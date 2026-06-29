@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white !important; }
+  @page { margin: 12mm; size: A4; }
+}
+
+select, input { font-family: inherit; }

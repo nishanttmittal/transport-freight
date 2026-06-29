@@ -1,0 +1,68 @@
+rules_version = '2';
+// ────────────────────────────────────────────────────────────────────────────
+// Firestore rules for the "unico-operations" project (hosts ALL UNICO apps).
+// Paste in: Firebase Console → Firestore Database → Rules → Publish.
+// Keeps Plating / Fitting (LIVE) / Orders UNCHANGED (signed-in read+write).
+// WELDER is ROLE-BASED:
+//   • Anyone signed in (incl. anonymous welders) → operational data + reads.
+//   • Manager (users doc role 'manager', active) → can CREATE payments.
+//   • Owner (bootstrap email OR users doc role 'owner', active) → rates,
+//     edit/reverse payments, ledger, manage users.
+// Bootstrap owner can never be locked out. Keep it in sync with config.js.
+// ────────────────────────────────────────────────────────────────────────────
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- helpers (welder roles) ----------------------------------------
+    function signedIn() { return request.auth != null; }
+    function tEmail() { return request.auth != null ? request.auth.token.get('email', '') : ''; }
+    function bootstrapOwner() { return tEmail() in ['nspenterprises24@gmail.com']; }
+    function uPath() { return /databases/$(database)/documents/apps/welder/users/$(tEmail()); }
+    function uExists() { return tEmail() != '' && exists(uPath()); }
+    function uData() { return get(uPath()).data; }
+    function isOwner() {
+      return signedIn() && (bootstrapOwner() ||
+        (uExists() && uData().role == 'owner' && uData().active == true));
+    }
+    function isManager() {
+      return signedIn() && (isOwner() ||
+        (uExists() && uData().role == 'manager' && uData().active == true));
+    }
+
+    // ---- Plating Job Work (unchanged) ----------------------------------
+    match /apps/platingjobwork/{collection}/{docId} { allow read, write: if request.auth != null; }
+    match /apps/platingjobwork { allow read, write: if request.auth != null; }
+
+    // ---- Fitting (LIVE — unchanged) ------------------------------------
+    match /apps/fitting/{collection}/{docId} { allow read, write: if request.auth != null; }
+    match /apps/fitting { allow read, write: if request.auth != null; }
+
+    // ---- Orders (unchanged) --------------------------------------------
+    match /apps/orders/{collection}/{docId} { allow read, write: if request.auth != null; }
+    match /apps/orders { allow read, write: if request.auth != null; }
+
+    // ---- Welder Contractor (role-based) --------------------------------
+    // Operational data: any signed-in user (welders are anonymous).
+    match /apps/welder/dispatches/{id}      { allow read, write: if signedIn(); }
+    match /apps/welder/products/{id}        { allow read, write: if signedIn(); }
+    match /apps/welder/welders/{id}         { allow read, write: if signedIn(); }
+    match /apps/welder/parties/{id}         { allow read, write: if signedIn(); }
+    match /apps/welder/plating_outbox/{id}  { allow read, write: if signedIn(); }
+    match /apps/welder/logs/{id}            { allow read, write: if signedIn(); }
+    match /apps/welder/meta/{id}            { allow read, write: if signedIn(); }
+
+    // Money: owner-only writes; payments are Manager-create / Owner edit-reverse.
+    match /apps/welder/rates/{id}    { allow read: if signedIn(); allow write: if isOwner(); }
+    match /apps/welder/ledger/{id}   { allow read: if signedIn(); allow write: if isOwner(); }
+    match /apps/welder/settlements/{id} { allow read: if signedIn(); allow write: if isOwner(); }
+    match /apps/welder/payments/{id} {
+      allow read:           if signedIn();
+      allow create:         if isManager();
+      allow update, delete: if isOwner();
+    }
+    match /apps/welder/users/{id}    { allow read: if signedIn(); allow write: if isOwner(); }
+
+    // Lock everything else.
+    match /{document=**} { allow read, write: if false; }
+  }
+}
