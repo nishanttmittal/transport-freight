@@ -4,7 +4,7 @@
  * so this app never collides with others on the same domain.
  */
 
-const APP_PREFIX = 'wld:' // welder app namespace
+const APP_PREFIX = 'tf:' // transport-freight app namespace
 
 const localStorageAdapter = {
   getRaw(key) {

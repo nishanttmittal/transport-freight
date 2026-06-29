@@ -62,6 +62,13 @@ service cloud.firestore {
     }
     match /apps/welder/users/{id}    { allow read: if signedIn(); allow write: if isOwner(); }
 
+    // ---- Transport Freight Hisab (Phase 1: any signed-in staff) --------
+    // Phase 1 = trusted staff only (owner/Anshul via Google; anon baseline for
+    // sync). Same model as Plating/Fitting/Orders. Tighten in Phase 2 when
+    // per-gaadiwala logins arrive.
+    match /apps/transportfreight/{collection}/{docId} { allow read, write: if request.auth != null; }
+    match /apps/transportfreight { allow read, write: if request.auth != null; }
+
     // Lock everything else.
     match /{document=**} { allow read, write: if false; }
   }

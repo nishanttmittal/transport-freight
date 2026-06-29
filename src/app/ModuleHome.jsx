@@ -4,7 +4,7 @@
  * Entirely data-driven: no module-specific code here.
  */
 export default function ModuleHome({ module, onOpen }) {
-  const { icon, title, pages, HomeStats } = module
+  const { title, pages, HomeStats } = module
   const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 
   return (
@@ -12,7 +12,9 @@ export default function ModuleHome({ module, onOpen }) {
       <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 pb-8" style={{ paddingTop: 'calc(2rem + env(safe-area-inset-top))' }}>
         <div className="max-w-lg mx-auto">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-xl">{icon}</div>
+            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center p-1.5 shadow-sm">
+              <img src={`${import.meta.env.BASE_URL}unico-logo.png`} alt="UNICO" className="max-w-full max-h-full object-contain" />
+            </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">{title}</h1>
               <p className="text-slate-400 text-xs mt-0.5">{today}</p>
