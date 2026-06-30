@@ -32,6 +32,7 @@ export const destinationSchema = [
 
 export const entrySchema = [
   field({ name: 'date',          label: 'Date',        type: 'date',   default: todayStr, required: true }),
+  field({ name: 'challanNo',     label: 'Challan No',  type: 'number', default: 0 }),
   field({ name: 'transporterId', label: 'Transporter', type: 'text',   default: '', required: true }),
   field({ name: 'gaadiNumber',   label: 'Gaadi No',    type: 'text',   default: '' }),
   field({ name: 'destinationId', label: 'Transport',   type: 'text',   default: '', required: true }),

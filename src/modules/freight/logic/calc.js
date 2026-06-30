@@ -11,6 +11,13 @@ export function entryTotal(e) {
   return num(e.freight) + num(e.lrCharge) + num(e.unloading) + num(e.misc) + num(e.extraPoint)
 }
 
+/** Next global challan/reference number = highest used so far + 1 (or `start`). */
+export function nextChallanNo(entries, start = 1) {
+  let max = 0
+  for (const e of (entries || [])) { const c = num(e.challanNo); if (c > max) max = c }
+  return Math.max(max + 1, start)
+}
+
 /** Cutoff date of the latest locked settlement for a transporter ('' if none). */
 export function unsettledFrom(settlements, transporterId) {
   const locked = (settlements || [])
@@ -75,7 +82,7 @@ export function ledgerLines(entries, advances, transporterId, opts = {}) {
   const rows = []
   for (const e of (entries || [])) {
     if (e.transporterId !== transporterId || e.deleted || !inRange(e.date)) continue
-    rows.push({ id: e.id, date: e.date, kind: 'freight', destinationId: e.destinationId, gaadiNumber: e.gaadiNumber, bags: num(e.bags), amount: entryTotal(e), debit: entryTotal(e), credit: 0, _s: e.createdAt || '' })
+    rows.push({ id: e.id, date: e.date, kind: 'freight', challanNo: num(e.challanNo), destinationId: e.destinationId, gaadiNumber: e.gaadiNumber, bags: num(e.bags), amount: entryTotal(e), debit: entryTotal(e), credit: 0, _s: e.createdAt || '' })
   }
   for (const a of (advances || [])) {
     if (a.transporterId !== transporterId || a.reversed || a.deleted || !inRange(a.date)) continue

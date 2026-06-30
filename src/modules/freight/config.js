@@ -21,6 +21,13 @@ export const EDIT_WINDOW_HOURS = 48
 /** Who paid an advance. */
 export const PAID_BY = ['Nishant', 'Anshul']
 
+/** Challan / reference number per vehicle entry — auto, sequential, fixed once
+ *  assigned. Change CHALLAN_START to continue an existing paper challan book. */
+export const CHALLAN_PREFIX = 'TF-'
+export const CHALLAN_PAD = 4
+export const CHALLAN_START = 1
+export const fmtChallan = (no) => (Number(no) > 0 ? `${CHALLAN_PREFIX}${String(no).padStart(CHALLAN_PAD, '0')}` : '—')
+
 /** Hisab alert levels (₹). Banner escalates as a transporter's balance crosses each. */
 export const THRESHOLD_LEVELS = [5000, 10000, 15000, 20000]
 

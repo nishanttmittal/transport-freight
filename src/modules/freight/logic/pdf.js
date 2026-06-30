@@ -6,7 +6,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { fmtDate, fmtNum, todayStr } from '../../../core/utils/format'
-import { APP_TITLE } from '../config'
+import { APP_TITLE, fmtChallan } from '../config'
 
 const STEEL = [30, 41, 59]
 const SLATE = [100, 116, 139]
@@ -34,16 +34,16 @@ export function buildStatementPdf({ transporterName, lines, destName, totals, pe
   doc.text(`Period: ${periodTxt}`, 40, 80)
 
   const body = (lines || []).map(l => l.kind === 'advance'
-    ? [fmtDate(l.date), 'Advance', l.paidBy ? `Paid by ${l.paidBy}` : (l.note || ''), '', `-${fmtNum(l.amount)}`, fmtNum(l.balance)]
-    : [fmtDate(l.date), 'Freight', `${destName ? destName(l.destinationId) : ''}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`, fmtNum(l.debit), '', fmtNum(l.balance)])
+    ? ['', fmtDate(l.date), 'Advance', l.paidBy ? `Paid by ${l.paidBy}` : (l.note || ''), '', `-${fmtNum(l.amount)}`, fmtNum(l.balance)]
+    : [fmtChallan(l.challanNo), fmtDate(l.date), 'Freight', `${destName ? destName(l.destinationId) : ''}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`, fmtNum(l.debit), '', fmtNum(l.balance)])
 
   autoTable(doc, {
     startY: 96,
-    head: [['Date', 'Type', 'Details', 'Freight ₹', 'Advance ₹', 'Balance ₹']],
-    body: body.length ? body : [['—', '', 'No activity in this period', '', '', '']],
+    head: [['Challan', 'Date', 'Type', 'Details', 'Freight ₹', 'Advance ₹', 'Balance ₹']],
+    body: body.length ? body : [['—', '—', '', 'No activity in this period', '', '', '']],
     styles: { fontSize: 9, cellPadding: 4 },
     headStyles: { fillColor: STEEL, textColor: 255 },
-    columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
+    columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
   })
 
   let y = (doc.lastAutoTable?.finalY || 96) + 24

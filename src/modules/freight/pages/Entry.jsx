@@ -11,9 +11,9 @@ import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Select, Nu
 import { todayStr, fmtNum, fmtDate } from '../../../core/utils/format'
 import { makeId } from '../../../core/db/repository'
 import { useFreight } from '../FreightContext'
-import { entryTotal, lockedOn } from '../logic/calc'
+import { entryTotal, lockedOn, nextChallanNo } from '../logic/calc'
 import { applyBalance } from '../logic/balance'
-import { EXTRA_POINT_HINT, QUICK_BAGS } from '../config'
+import { EXTRA_POINT_HINT, QUICK_BAGS, CHALLAN_START, fmtChallan } from '../config'
 
 const ADD = '__add__'
 const active = (list) => (list || []).filter(x => !x.deleted && x.active !== false)
@@ -36,6 +36,7 @@ export default function Entry({ by = '', level = '' }) {
   const tList = active(transporters.list)
   const dList = active(destinations.list)
   const grandTotal = drops.reduce((s, d) => s + entryTotal(d), 0)
+  const challanNo = nextChallanNo(entries.list, CHALLAN_START) // the number this Save will get
 
   const tOptions = [{ value: '', label: 'Select transporter' }, ...tList.map(t => ({ value: t.id, label: t.name })), { value: ADD, label: '＋ Add new transporter' }]
   const dOptions = [{ value: '', label: 'Select transport' }, ...dList.map(d => ({ value: d.id, label: d.name })), { value: ADD, label: '＋ Add new transport' }]
@@ -69,10 +70,12 @@ export default function Entry({ by = '', level = '' }) {
     if (lockedOn(settlements.list, veh.transporterId, veh.date)) return show('This period is settled & locked', 2600)
 
     const bId = makeId('batch')
+    const challan = nextChallanNo(entries.list, CHALLAN_START)
     let grand = 0
     drops.forEach((d) => {
       const rec = {
         date: veh.date,
+        challanNo: challan,
         transporterId: veh.transporterId,
         gaadiNumber: veh.gaadiNumber.trim(),
         destinationId: d.destinationId,
@@ -104,7 +107,7 @@ export default function Entry({ by = '', level = '' }) {
     setVeh({ date: veh.date, transporterId: '', gaadiNumber: '' })
     setDrops([emptyDrop()])
     const tName = tList.find(t => t.id === veh.transporterId)?.name || ''
-    show(crossed ? `Saved ${n} drop${n > 1 ? 's' : ''} · ${tName} crossed ₹${fmtNum(crossed)}` : `Saved ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
+    show(crossed ? `Saved ${fmtChallan(challan)} · ${tName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
   }
 
   return (
@@ -113,6 +116,10 @@ export default function Entry({ by = '', level = '' }) {
 
       {/* Vehicle-level: date, transporter, gaadi */}
       <Card className="p-4 space-y-4">
+        <div className="flex items-center justify-between bg-slate-800 text-white rounded-2xl px-4 py-3">
+          <span className="text-xs uppercase tracking-wide text-slate-300 font-bold">Challan No</span>
+          <span className="text-lg font-bold font-mono">{fmtChallan(challanNo)}</span>
+        </div>
         <div>
           <FieldLabel>Date</FieldLabel>
           <div className="mt-1.5"><DateInput value={veh.date} onChange={e => setVehField('date')(e.target.value)} /></div>

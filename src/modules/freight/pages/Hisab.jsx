@@ -11,7 +11,7 @@ import { useFreight } from '../FreightContext'
 import { ledgerLines, transporterTotals, unsettledFrom, thresholdLevel } from '../logic/calc'
 import { levelStyle } from '../logic/balance'
 import { shareStatementPdf } from '../logic/pdf'
-import { THRESHOLD_LEVELS } from '../config'
+import { THRESHOLD_LEVELS, fmtChallan } from '../config'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
@@ -97,7 +97,7 @@ export default function Hisab({ owner = false, by = '' }) {
                   <div key={l.id} className="px-4 py-3 flex items-center gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold text-slate-800 truncate">
-                        {l.kind === 'advance' ? `Advance${l.paidBy ? ' · ' + l.paidBy : ''}` : `${destName(l.destinationId)}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`}
+                        {l.kind === 'advance' ? `Advance${l.paidBy ? ' · ' + l.paidBy : ''}` : `${l.challanNo ? fmtChallan(l.challanNo) + ' · ' : ''}${destName(l.destinationId)}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`}
                       </div>
                       <div className="text-xs text-slate-400">{fmtDate(l.date)}{l.kind === 'freight' && l.bags ? ` · ${l.bags} bags` : ''}{l.kind === 'advance' && l.note ? ` · ${l.note}` : ''}</div>
                     </div>

@@ -3,7 +3,7 @@
  * Run: node test-freight.mjs
  */
 import assert from 'node:assert'
-import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines } from './src/modules/freight/logic/calc.js'
+import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
 
@@ -54,5 +54,11 @@ assert.equal(lockedOn(lk, 't1', '2026-06-05'), null)
 const lines = ledgerLines(entries, advances, 't1', {})
 assert.equal(lines.length, 3) // e1, e2, a1 (e4 deleted, a2 reversed)
 assert.equal(lines[lines.length - 1].balance, 2550)
+
+// nextChallanNo: highest used + 1, respects start, ignores blanks
+assert.equal(nextChallanNo([], 1), 1)                                   // none yet → start
+assert.equal(nextChallanNo([], 1001), 1001)                            // custom start
+assert.equal(nextChallanNo([{ challanNo: 4 }, { challanNo: 7 }, {}], 1), 8) // max+1, blank ignored
+assert.equal(nextChallanNo([{ challanNo: 2 }], 1000), 1000)            // start wins when higher
 
 console.log('ALL FREIGHT CALC TESTS PASSED')
