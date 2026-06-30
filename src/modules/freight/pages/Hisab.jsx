@@ -30,7 +30,7 @@ export default function Hisab({ owner = false, by = '' }) {
   const level = thresholdLevel(totals.balance, THRESHOLD_LEVELS)
   const style = levelStyle(level)
 
-  const options = [{ value: '', label: 'Select transporter' }, ...tList.map(t => ({ value: t.id, label: t.name }))]
+  const options = [{ value: '', label: 'Select gaadiwala' }, ...tList.map(t => ({ value: t.id, label: t.name }))]
 
   const doShare = () => {
     if (!transporter) return
@@ -62,7 +62,7 @@ export default function Hisab({ owner = false, by = '' }) {
       <Toast msg={msg} />
 
       <Card className="p-4">
-        <FieldLabel>Transporter</FieldLabel>
+        <FieldLabel>Gaadiwala</FieldLabel>
         <div className="mt-1.5"><Select options={options} value={tid} onChange={e => setTid(e.target.value)} /></div>
       </Card>
 

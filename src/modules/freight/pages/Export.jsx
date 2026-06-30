@@ -23,7 +23,7 @@ export default function Export() {
   const download = () => {
     const rows = (entries.list || []).filter(e => !e.deleted && (e.date || '') >= from && (e.date || '') <= to)
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-    const header = ['Challan', 'Date', 'Transporter', 'Gaadi No', 'Transport', 'Bags', 'Pvt Marka', 'Freight', 'LR', 'Unloading', 'Misc', 'Extra Point', 'Total', 'Remarks']
+    const header = ['Challan', 'Date', 'Gaadiwala', 'Gaadi No', 'Transport', 'Bags', 'Pvt Marka', 'Freight', 'LR', 'Unloading', 'Misc', 'Extra Point', 'Total', 'Remarks']
     const body = rows.map(e => [fmtChallan(e.challanNo), fmtDate(e.date), tName(e.transporterId), e.gaadiNumber, dName(e.destinationId), e.bags, e.pvtMarka, e.freight, e.lrCharge, e.unloading, e.misc, e.extraPoint, entryTotal(e), e.remarks])
     const csv = [header, ...body].map(r => r.map(csvCell).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })

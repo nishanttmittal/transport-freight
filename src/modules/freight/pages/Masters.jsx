@@ -64,7 +64,7 @@ export default function Masters() {
   const { transporters, destinations } = useFreight()
   return (
     <div className="max-w-lg mx-auto p-4 space-y-4">
-      <MasterList title="Transporters" repo={transporters} withPhone />
+      <MasterList title="Gaadiwalas" repo={transporters} withPhone />
       <MasterList title="Destinations" repo={destinations} />
     </div>
   )

@@ -21,11 +21,11 @@ export default function Advances({ owner = false, by = '' }) {
 
   const tList = active(transporters.list).filter(t => t.active !== false)
   const tName = (id) => transporters.list.find(t => t.id === id)?.name || '—'
-  const options = [{ value: '', label: 'Select transporter' }, ...tList.map(t => ({ value: t.id, label: t.name }))]
+  const options = [{ value: '', label: 'Select gaadiwala' }, ...tList.map(t => ({ value: t.id, label: t.name }))]
 
   const save = () => {
     const amt = Number(form.amount) || 0
-    if (!form.transporterId) return show('Pick a transporter', 2000)
+    if (!form.transporterId) return show('Pick a gaadiwala', 2000)
     if (amt <= 0) return show('Enter an amount', 2000)
     if (lockedOn(settlements.list, form.transporterId, form.date)) return show('This period is settled & locked', 2600)
     advances.insert({ date: form.date, transporterId: form.transporterId, amount: amt, paidBy: form.paidBy, note: form.note.trim(), reversed: false, deleted: false, createdByUser: by || '' })
@@ -51,7 +51,7 @@ export default function Advances({ owner = false, by = '' }) {
       <Toast msg={msg} />
       <Card className="p-4 space-y-4">
         <div><FieldLabel>Date</FieldLabel><div className="mt-1.5"><DateInput value={form.date} onChange={set('date')} /></div></div>
-        <div><FieldLabel>Transporter</FieldLabel><div className="mt-1.5"><Select options={options} value={form.transporterId} onChange={set('transporterId')} /></div></div>
+        <div><FieldLabel>Gaadiwala</FieldLabel><div className="mt-1.5"><Select options={options} value={form.transporterId} onChange={set('transporterId')} /></div></div>
         <div><FieldLabel>Amount (₹)</FieldLabel><div className="mt-1.5"><NumberInput value={form.amount} placeholder="0" onChange={set('amount')} /></div></div>
         <div>
           <FieldLabel>Paid by</FieldLabel>

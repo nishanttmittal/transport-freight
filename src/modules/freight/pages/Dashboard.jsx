@@ -39,7 +39,7 @@ export default function Dashboard() {
       <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-2xl p-4">
         <div className="flex gap-2">
           {stat(`₹${fmtNum(todayFreight)}`, 'Freight today')}
-          {stat(tList.length, 'Transporters')}
+          {stat(tList.length, 'Gaadiwalas')}
           {stat(`₹${fmtNum(outstanding)}`, 'Outstanding')}
         </div>
       </div>
@@ -47,7 +47,7 @@ export default function Dashboard() {
       <ThresholdBanner transporters={tList} state={state} onOpen={setOpenId} />
 
       <div className="space-y-2">
-        {rows.length === 0 && <Card className="p-6 text-center text-slate-400 text-sm">No transporters yet. Add one from the Entry screen.</Card>}
+        {rows.length === 0 && <Card className="p-6 text-center text-slate-400 text-sm">No gaadiwalas yet. Add one from the Entry screen.</Card>}
         {rows.map(({ t, bal }) => {
           const level = thresholdLevel(bal, THRESHOLD_LEVELS)
           const s = levelStyle(level)

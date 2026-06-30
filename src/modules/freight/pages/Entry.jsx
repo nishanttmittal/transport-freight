@@ -38,7 +38,7 @@ export default function Entry({ by = '', level = '' }) {
   const grandTotal = drops.reduce((s, d) => s + entryTotal(d), 0)
   const challanNo = nextChallanNo(entries.list, CHALLAN_START) // the number this Save will get
 
-  const tOptions = [{ value: '', label: 'Select transporter' }, ...tList.map(t => ({ value: t.id, label: t.name })), { value: ADD, label: '＋ Add new transporter' }]
+  const tOptions = [{ value: '', label: 'Select gaadiwala' }, ...tList.map(t => ({ value: t.id, label: t.name })), { value: ADD, label: '＋ Add new gaadiwala' }]
   const dOptions = [{ value: '', label: 'Select transport' }, ...dList.map(d => ({ value: d.id, label: d.name })), { value: ADD, label: '＋ Add new transport' }]
 
   const onSelectTransporter = (e) => { const v = e.target.value; if (v === ADD) { setAdding({ type: 'transporter' }); setNewName('') } else setVehField('transporterId')(v) }
@@ -63,7 +63,7 @@ export default function Entry({ by = '', level = '' }) {
   const removeDrop = (i) => setDrops(ds => ds.filter((_, idx) => idx !== i))
 
   const save = () => {
-    if (!veh.transporterId) return show('Pick a transporter', 2000)
+    if (!veh.transporterId) return show('Pick a gaadiwala', 2000)
     for (let i = 0; i < drops.length; i++) {
       if (!drops[i].destinationId) return show(`Pick transport for drop ${i + 1}`, 2200)
     }
@@ -127,11 +127,11 @@ export default function Entry({ by = '', level = '' }) {
         </div>
 
         <div>
-          <FieldLabel>Transporter</FieldLabel>
+          <FieldLabel>Gaadiwala</FieldLabel>
           <div className="mt-1.5">
             {adding?.type === 'transporter' ? (
               <div className="flex gap-2">
-                <TextInput autoFocus value={newName} placeholder="New transporter name" onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveNewMaster()} />
+                <TextInput autoFocus value={newName} placeholder="New gaadiwala name" onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveNewMaster()} />
                 <Button onClick={saveNewMaster}>Add</Button>
                 <Button variant="neutral" onClick={() => setAdding(null)}>✕</Button>
               </div>

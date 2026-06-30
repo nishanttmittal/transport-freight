@@ -14,7 +14,7 @@ import { field } from '../../core/schema/field'
 import { todayStr } from '../../core/utils/format'
 
 export const transporterSchema = [
-  field({ name: 'name',           label: 'Transporter', type: 'text',   default: '', required: true }),
+  field({ name: 'name',           label: 'Gaadiwala', type: 'text',   default: '', required: true }),
   field({ name: 'phone',          label: 'Phone',       type: 'text',   default: '' }),
   field({ name: 'active',         label: 'Active',      type: 'toggle', default: true }),
   // running balance (maintained incrementally; full recompute available in Admin)
@@ -33,7 +33,7 @@ export const destinationSchema = [
 export const entrySchema = [
   field({ name: 'date',          label: 'Date',        type: 'date',   default: todayStr, required: true }),
   field({ name: 'challanNo',     label: 'Challan No',  type: 'number', default: 0 }),
-  field({ name: 'transporterId', label: 'Transporter', type: 'text',   default: '', required: true }),
+  field({ name: 'transporterId', label: 'Gaadiwala', type: 'text',   default: '', required: true }),
   field({ name: 'gaadiNumber',   label: 'Gaadi No',    type: 'text',   default: '' }),
   field({ name: 'destinationId', label: 'Transport',   type: 'text',   default: '', required: true }),
   field({ name: 'bags',          label: 'Bags',        type: 'number', default: 0 }),
@@ -56,7 +56,7 @@ export const entrySchema = [
 
 export const advanceSchema = [
   field({ name: 'date',          label: 'Date',        type: 'date',   default: todayStr, required: true }),
-  field({ name: 'transporterId', label: 'Transporter', type: 'text',   default: '', required: true }),
+  field({ name: 'transporterId', label: 'Gaadiwala', type: 'text',   default: '', required: true }),
   field({ name: 'amount',        label: 'Amount',      type: 'number', default: 0 }),
   field({ name: 'paidBy',        label: 'Paid By',     type: 'text',   default: 'Nishant' }), // Nishant | Anshul
   field({ name: 'note',          label: 'Note',        type: 'text',   default: '' }),
@@ -66,7 +66,7 @@ export const advanceSchema = [
 ]
 
 export const settlementSchema = [
-  field({ name: 'transporterId', label: 'Transporter', type: 'text',   default: '', required: true }),
+  field({ name: 'transporterId', label: 'Gaadiwala', type: 'text',   default: '', required: true }),
   field({ name: 'periodFrom',    label: 'From',        type: 'text',   default: '' }),
   field({ name: 'periodTo',      label: 'To',          type: 'text',   default: '' }),   // cutoff (lock on/before)
   field({ name: 'totalFreight',  label: 'Freight',     type: 'number', default: 0 }),
