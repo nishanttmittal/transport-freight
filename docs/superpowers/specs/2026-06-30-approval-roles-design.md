@@ -130,12 +130,33 @@ is replaced by role-aware rules (mirroring the welder app's pattern), keyed off 
 > Rules are deployed via `attendance-app/jobs/deployRules.js` after pulling live (so the
 > other apps' rules are preserved), then audited — same safe procedure used on 2026-06-30.
 
-**Note on enforceability:** truly hiding *other* gaadiwalas' rows from a gaadiwala requires
-either per-row `transporterId` checks in rules (works for direct doc reads) or moving each
-gaadiwala's data under his own path. Period-scoping ("only unsettled") is enforced in-app +
-best-effort in rules; the hard guarantee in rules is **own-transporter-only** and
-**pending-only writes**. This is called out so we choose the data layout that makes the
-isolation real (see Implementation plan).
+### 8.1 Data layout & read isolation (DECIDED — critical)
+
+Firestore rules **allow or deny a whole query; they do not filter it**. So a gaadiwala
+**cannot** use the app's current "load all entries" subscription
+(`onSnapshot(collection('…/entries'))`) — under any restrictive rule that listen is
+rejected outright and **his own dashboard would show nothing**. This is the deciding
+constraint, so the layout is fixed here:
+
+- **Keep the flat layout** (`apps/transportfreight/entries`) — **no data migration** of the
+  chakkars already saved.
+- **Owner / Staff:** keep the existing whole-collection subscription (rule allows
+  manager/owner).
+- **Gaadiwala:** load with a **scoped query** — `where('transporterId','==', hisId)` (then
+  narrowed in-app to his unsettled period). Rule:
+  `allow read: if isManagerOrOwner() || resource.data.transporterId == myTid`. Firestore
+  then **permits his scoped query and denies any unscoped or cross-gaadiwala query**
+  (every returned doc must satisfy the rule, or the whole query is refused).
+- `myTid` comes from his `users/{email}.transporterId` (a cached rule `get()`); if `get()`
+  cost ever matters, upgrade to a **custom claim** on his auth token (set via
+  `attendance-app/jobs` admin SDK when linking him).
+- **Hard security boundary = "own-transporter-only."** This is a genuine breach if violated,
+  so it is **verified with a rules smoke-test** — a gaadiwala token must FAIL to read another
+  transporter's entry — before we trust it (same method used for the anon path on 2026-06-30).
+- **Period-scoping and "pending-only edits" are APP-LEVEL integrity**, not hard rule
+  guarantees (rules can't compare a query against "last settlement date"). Enforced in the
+  app and best-effort in rules. Nobody should treat the period wall as a security guarantee —
+  only the **transporter wall** is.
 
 ---
 
@@ -156,11 +177,14 @@ isolation real (see Implementation plan).
 
 1. **Stage A — Approval queue (no gaadiwala login yet):** add `status`, a "Pending review"
    screen for N/A, Pass/Void/Edit, balance counts passed-only, payment numbers. Staff entry
-   still direct. *(Usable immediately; low risk.)*
+   still direct. **Flat layout retained — no migration.** *(Usable immediately; low risk.)*
 2. **Stage B — Gaadiwala login + own view:** `gaadiwala` role + `transporterId` link;
-   gaadiwala entry (→pending) + his dashboard (chakkars+payments+balance, current period).
-3. **Stage C — Lock it down in rules:** role-based Firestore rules (own-only, pending-only
-   writes, owner-only settle) + the settled-edit adjustment route + audit. Deploy + audit.
+   gaadiwala entry (→pending) + his dashboard (chakkars+payments+balance, current period),
+   loaded via the **scoped `where('transporterId','==',id)` query** from §8.1.
+3. **Stage C — Lock it down in rules:** role-based Firestore rules (own-transporter-only
+   reads, pending-only gaadiwala writes, owner-only settle) + the settled-edit adjustment
+   route + audit. Deploy + audit + **run the isolation smoke-test** (gaadiwala token must be
+   denied another transporter's data) before trusting it.
 
 ---
 
