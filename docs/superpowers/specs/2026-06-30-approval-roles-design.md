@@ -42,25 +42,41 @@ plus a `transporterId` link).
 ## 4. Chakkar lifecycle (state machine)
 
 ```
- G enters chakkar ─────────────► PENDING ──(N/A: Pass)──► PASSED  (in hisab, counts in balance)
-                                   │  ▲                      │
-            (N/A: Void)            │  │ (N/A: Edit fields)   │ (N/A: Edit / Delete per rules)
-                                   ▼  │                      ▼
-                                 VOIDED (never in hisab)   DELETED (soft; balance reversed)
+ G enters chakkar ─► PENDING ──(N/A: Pass)──────────► PASSED  (in hisab, counts in balance)
+                       │  ▲                              │
+       (N/A: Return)   │  │ (G edits & resubmits)        │ (N/A: Edit-in-place / Delete per rules)
+                       ▼  │                              ▼
+              NEEDS_CORRECTION                          DELETED (soft; balance reversed)
+                       │
+       (N/A: Void) ────┴──────────────────► VOIDED (never in hisab)
 
- N/A enters chakkar ───────────► PASSED directly (they are the authority; no approval step)
+ N/A enters chakkar ─────────────────────► PASSED directly (they are the authority; no approval)
 ```
 
-- **PENDING:** submitted by a gaadiwala, **not** counted in any balance, **no official
+- **PENDING:** submitted by a gaadiwala; **not** counted in any balance; **no official
   challan number yet** (shows "Pending review").
+- **NEEDS_CORRECTION:** N/A returned it to the gaadiwala to fix (with a **mandatory reason** —
+  wrong weight / vehicle / amount / challan). The gaadiwala edits and resubmits → PENDING.
+  Better than voiding a fixable trip.
 - **PASSED:** approved → enters the hisab, gets the next **official challan number**
-  (`TF-0001…`), counts toward the balance.
-- **VOIDED:** a pending chakkar rejected at review — never enters the hisab. Optional void
-  reason. Kept for record (soft).
+  (`TF-0001…`, continuous), counts toward the balance.
+- **VOIDED:** a pending chakkar rejected at review — never enters the hisab. **Mandatory
+  void reason.** Kept for record (soft).
 - **DELETED:** an already-passed chakkar removed later (per permission rules) — soft-delete,
   balance reversed. Kept for audit.
 
-Only **gaadiwala-entered** chakkars pass through PENDING. Staff/owner entries are born PASSED.
+Only **gaadiwala-entered** chakkars pass through PENDING/NEEDS_CORRECTION. Staff/owner
+entries are born PASSED.
+
+### 4.1 Correcting a PASSED entry (decided 2026-06-30)
+
+- **Open (unsettled) period:** N/A **edit in place**. Every edit **increments a `revision`
+  counter** and writes a full **before→after** line to the audit log, so no version is ever
+  lost. (Chosen over ERP-style "adjustment for every change" to keep it simple for staff,
+  while still preserving complete history.)
+- **Settled (locked, paid) period:** the closed entry is **immutable**. A correction posts
+  as a visible **adjustment** in the gaadiwala's current period (audit note references the
+  original challan + old→new). Only the owner can do this.
 
 ---
 
@@ -93,10 +109,11 @@ longer touch those entries; only Nishant can (and only via the adjustment route 
 
 ## 6. What the gaadiwala sees (his dashboard)
 
-For his **current open period** only: his **chakkars** (with status Pending / Passed /
-Voided), the **payments** Nishant/Anshul recorded for him, and his **running balance due**.
-Full transparency to cut "you didn't pay me" disputes. After Nishant settles, the settled
-items drop off his view and a clean new period starts.
+For his **current open period** only: his **chakkars** grouped into clear buckets —
+**Pending · Needs correction · Approved · Rejected** — plus the **payments** Nishant/Anshul
+recorded for him (**Paid**) and his **running balance due** (**Outstanding**). Full
+transparency to cut "you didn't pay me" disputes. After Nishant settles, the settled items
+drop off his view and a clean new period starts.
 
 ---
 
@@ -162,44 +179,77 @@ constraint, so the layout is fixed here:
 
 ## 9. Data model changes (additive, back-compatible)
 
-- `entrySchema`: add `status` (`pending|passed|voided`, default `passed` so existing rows
-  stay in the hisab), `submittedBy`, `approvedBy`, `approvedAt`, `voidReason`,
-  `adjustsChallanNo` (for adjustment lines). `challanNo` stays (now set on Pass).
-- `advanceSchema`: add `paymentNo` (sequential).
+- `entrySchema`: add `status` (`pending|needs_correction|passed|voided`, default `passed`
+  so existing rows stay in the hisab), `revision` (int, +1 each edit), `submittedBy`,
+  `approvedBy`, `approvedAt`, `voidReason`, `correctionReason` (for Return), `adjustsChallanNo`
+  (for adjustment lines). `challanNo` stays (set on Pass; continuous `TF-0001`).
+- `advanceSchema`: add `paymentNo` (sequential, continuous `PAY-0001`) + `factoryId`.
+- `settlementSchema`: add a **snapshot** — `tripCount`, `totalPayments`, `closingBalance`
+  (alongside existing totals) + `pdfHash` (SHA-256 of the generated statement, so the paid
+  figure is provable later) + `factoryId`.
 - `userSchema`: add `role` value `gaadiwala` and a `transporterId` link.
-- Hisab/balance math counts only `status == 'passed'` and not deleted; pending/voided are
-  excluded. Adjustments are normal passed entries flagged with `adjustsChallanNo`.
-- Every pass/void/edit/delete/settle writes an audit line to `logs` (who, when, old→new).
+- Hisab/balance math counts only `status == 'passed'` and not deleted; pending / needs_correction
+  / voided are excluded. Adjustments are normal passed entries flagged with `adjustsChallanNo`.
+- **Duplicate guard:** on entry, warn (non-blocking) if the same `gaadiNumber` + `date` +
+  total already exists for this gaadiwala ("possible duplicate?").
+- **Audit:** every submit/return/pass/void/edit/delete/settle writes a `logs` line —
+  `action`, `user`, `role`, `timestamp`, `device` (userAgent), `reason` (where applicable),
+  and `before`→`after`. (No IP — a client PWA can't capture it reliably without a server.)
 
 ---
 
 ## 10. Staged delivery (ship safely, never break the live app)
 
-1. **Stage A — Approval queue (no gaadiwala login yet):** add `status`, a "Pending review"
-   screen for N/A, Pass/Void/Edit, balance counts passed-only, payment numbers. Staff entry
-   still direct. **Flat layout retained — no migration.** *(Usable immediately; low risk.)*
-2. **Stage B — Gaadiwala login + own view:** `gaadiwala` role + `transporterId` link;
-   gaadiwala entry (→pending) + his dashboard (chakkars+payments+balance, current period),
-   loaded via the **scoped `where('transporterId','==',id)` query** from §8.1.
-3. **Stage C — Lock it down in rules:** role-based Firestore rules (own-transporter-only
-   reads, pending-only gaadiwala writes, owner-only settle) + the settled-edit adjustment
-   route + audit. Deploy + audit + **run the isolation smoke-test** (gaadiwala token must be
-   denied another transporter's data) before trusting it.
+1. **Stage 1 — Approval queue + audit (no gaadiwala login yet):** `status` +
+   `needs_correction`, a "Pending review" screen for N/A (Pass / Return / Void with
+   mandatory reason), `revision` + before→after audit log, payment numbers, duplicate
+   warning, balance counts passed-only. Staff entry still direct. **Flat layout retained —
+   no migration.** *(Usable immediately; lowest risk.)*
+2. **Stage 2 — Gaadiwala login + own view:** `gaadiwala` role + `transporterId` link; Google
+   login; gaadiwala entry (→pending) + his dashboard (buckets + payments + balance, current
+   period), loaded via the **scoped `where('transporterId','==',id)` query** from §8.1.
+3. **Stage 3 — Lock it down + settlement integrity:** role-based Firestore rules
+   (own-transporter-only reads, pending-only gaadiwala writes, owner-only settle) + settled-
+   edit **adjustment** route + settlement **snapshot/PDF-hash**. Deploy + audit + **run the
+   isolation smoke-test** (a gaadiwala token must be denied another transporter's data)
+   before trusting it.
+4. **Stage 4 — Nice-to-haves (later, as needed):** reports/registers, notifications (via the
+   WhatsApp bridge), offline (Firestore built-in persistence), photo attachments, search,
+   duplicate-history, transporter-merge, an `accounts` role. None block launch.
 
 ---
 
-## 11. Out of scope (note for later)
+## 11. Out of scope for now (Stage 4 or later — reviewed & deliberately deferred)
 
-- WhatsApp/in-app notifications on submit/approve (we have the bridge — easy add later).
+Deferred from the external review (real value, but not needed to launch; YAGNI):
+- **Reports/registers** (transporter ledger, monthly freight, pending-approval, outstanding,
+  settlement/payment registers, top transporters, avg freight). CSV export exists today.
+- **Notifications** on submit/approve (we have the WhatsApp bridge — easy add later).
+- **Offline entry** (switch on Firestore's built-in offline persistence when the driver app ships).
+- **Photo attachments** (LR / weighbridge / invoice) — needs Firebase Storage.
+- **Search** across vehicle/date/destination/status.
+- **Transporter merge** (fold "Raj Transport" + "Raj Transport Delhi" into one).
+- **`accounts` role** (record payments + reports, no approve/edit) — the role system is
+  data-driven, so this is a trivial later add.
+
+Not planned:
 - Gaadiwala entering his own payments (payments stay owner/manager-only).
-- Multi-factory / multi-owner.
+- Multi-owner. (Multi-**factory** is already future-proofed via `factoryId` on every record.)
 
 ---
 
-## 12. Open items for owner to confirm at review
+## 12. Decisions locked (owner, 2026-06-30 → 07-01)
 
-1. Matrix in §5 — anything wrong?
-2. §6 — show gaadiwala his balance+payments (recommended) — OK?
-3. §7 — challan number assigned on **Pass**, not on submit — OK? (keeps the challan book clean)
-4. §5 note — editing a **settled** chakkar becomes an **adjustment** in the new period — OK?
-5. Should Anshul be able to **enter payments** (matrix says yes) — confirm.
+- Gaadiwala login = **Google**. Edit settled = **adjustment in new period**. Anshul's window
+  = **current period for both edit & delete** (no 7-day cap). Gaadiwala sees **chakkars +
+  payments + balance**.
+- Correcting a PASSED entry (open period) = **edit in place + `revision` + before→after audit**
+  (not ERP adjustment-per-change). Numbers = **continuous** `TF-0001` / `PAY-0001`.
+- Adopted from external review: `needs_correction` status (Return-to-driver), revision numbers,
+  expanded audit (reason + before→after + device; no IP), settlement snapshot + PDF hash,
+  duplicate warning, mandatory **void/return** reason, driver status buckets, 4-stage rollout.
+- Pushed back (agreed): **approval reason optional** (only void/return mandatory); **no full
+  open-period immutability**; Stage-4 features (photos, offline, notifications, search, reports,
+  merge, `accounts` role) **deferred**, not built for launch.
+- Confirmed: Anshul **can** record payments. `factoryId` already on records (extended to
+  payments/settlements).
