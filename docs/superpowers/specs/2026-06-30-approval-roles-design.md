@@ -1,7 +1,7 @@
 # Transport Freight Hisab — Approval Workflow + Roles & Permissions (Phase 2)
 
-**Date:** 2026-06-30
-**Status:** DESIGN — awaiting owner review before implementation plan.
+**Date:** 2026-06-30 (finalised 2026-07-01 after two external reviews, 9.8/10)
+**Status:** APPROVED design — ready to turn into an implementation plan.
 **Builds on:** the LIVE app (challan entries, multi-drop, hisab, settle+PDF). This is
 additive; it must NOT break the current staff-entry flow or any saved data.
 
@@ -44,9 +44,9 @@ plus a `transporterId` link).
 ```
  G enters chakkar ─► PENDING ──(N/A: Pass)──────────► PASSED  (in hisab, counts in balance)
                        │  ▲                              │
-       (N/A: Return)   │  │ (G edits & resubmits)        │ (N/A: Edit-in-place / Delete per rules)
+       (N/A: Return)   │  │ (G edits & resubmits)        │ (N/A: Edit-in-place / Cancel per rules)
                        ▼  │                              ▼
-              NEEDS_CORRECTION                          DELETED (soft; balance reversed)
+              NEEDS_CORRECTION                          CANCELLED (kept in ledger; balance reversed)
                        │
        (N/A: Void) ────┴──────────────────► VOIDED (never in hisab)
 
@@ -62,11 +62,20 @@ plus a `transporterId` link).
   (`TF-0001…`, continuous), counts toward the balance.
 - **VOIDED:** a pending chakkar rejected at review — never enters the hisab. **Mandatory
   void reason.** Kept for record (soft).
-- **DELETED:** an already-passed chakkar removed later (per permission rules) — soft-delete,
-  balance reversed. Kept for audit.
+- **CANCELLED:** an already-passed chakkar removed later (per permission rules) — a
+  **status change, not a delete**. It stays in the ledger marked "Cancelled", its balance
+  contribution is reversed, with a mandatory reason. Nothing financial is ever hard-deleted.
+  *(Pending/needs-correction chakkars, which never touched the hisab, can still be plain
+  soft-deleted/withdrawn — they're not financial records.)*
 
 Only **gaadiwala-entered** chakkars pass through PENDING/NEEDS_CORRECTION. Staff/owner
 entries are born PASSED.
+
+### 4.2 Concurrency (two people, one entry)
+
+Every write carries the `revision` it was loaded at. On save, if the stored `revision` has
+moved on (someone else edited first), the save is **rejected with "refresh — this was just
+changed by X"** instead of silently overwriting. (Optimistic concurrency using `revision`.)
 
 ### 4.1 Correcting a PASSED entry (decided 2026-06-30)
 
@@ -91,8 +100,8 @@ entries are born PASSED.
 | Edit a **Passed** chakkar | ❌ | ✅ **current period only** | ✅ anytime* |
 | Pass (approve) a Pending chakkar | ❌ | ✅ | ✅ |
 | Void (reject) a Pending chakkar | ❌ | ✅ | ✅ |
-| Withdraw/Delete own **Pending** chakkar | ✅ own only | ✅ | ✅ |
-| Delete a **Passed** chakkar | ❌ | ✅ **current period only** | ✅ anytime* |
+| Withdraw own **Pending** chakkar (soft-delete) | ✅ own only | ✅ | ✅ |
+| **Cancel** a **Passed** chakkar (status, reversible) | ❌ | ✅ **current period only** | ✅ anytime* |
 | Record a payment | ❌ | ✅ | ✅ |
 | Edit/reverse a payment | ❌ | current period | anytime* |
 | Settle / clear hisab (lock period) | ❌ | ❌ | ✅ |
@@ -115,14 +124,40 @@ recorded for him (**Paid**) and his **running balance due** (**Outstanding**). F
 transparency to cut "you didn't pay me" disputes. After Nishant settles, the settled items
 drop off his view and a clean new period starts.
 
+### 6.1 Approval home (Nishant / Anshul) — the operational homepage
+
+The first screen for staff/owner is a live worklist: **Pending today · Returned today ·
+Approved today · Voided today · Settlements pending · Total outstanding**. Tapping "Pending"
+opens the review queue (Pass / Return / Void). This is where the day's work happens.
+
 ---
 
 ## 7. Numbering
 
 - **Challan no** (`TF-0001…`): assigned when a chakkar is **Passed** (so voided/rejected
   trips don't consume numbers). One per chakkar, fixed once assigned, global sequential.
-- **Payment no** (`PAY-0001…`): assigned when a payment is recorded. One per payment,
-  fixed, global sequential.
+- **Payment no** (`PAY-0001…`): assigned when a payment is recorded.
+- **Settlement no** (`SET-0001…`): assigned when a hisab is settled.
+
+### 7.1 Allocation must be atomic (must-fix from review)
+
+Numbers are **never** derived from "max seen on the client" (two simultaneous approvals could
+collide). Each number is allocated inside a **Firestore transaction** on a counter document
+`apps/transportfreight/meta/counters` (`{ challan, payment, settlement }`). A Firestore
+transaction executes **atomically on the server even when started from the client** — so no
+Cloud Function / separate backend is required, and concurrent approvals cannot produce a
+duplicate number.
+
+### 7.2 Numbering strategy & edge cases
+
+- **Failed transaction:** the counter only advances when the transaction commits, so a failed
+  Pass leaves **no gap**.
+- **Cancelled/voided after the fact:** the number is **retained, never reused** (the trip stays
+  in the ledger as Cancelled) — a small permanent gap is expected and correct for audit.
+- **Seed / continue a paper book / import:** the counter doc's start value is settable
+  (`CHALLAN_START` etc.); set it once before go-live to continue an existing series.
+- Numbers are **display/reference** identifiers; the immutable record key stays the Firestore
+  doc id. A gap in the visible series never affects balances.
 
 ---
 
@@ -142,6 +177,8 @@ is replaced by role-aware rules (mirroring the welder app's pattern), keyed off 
   write settlements.
 - **Owner** full access; bootstrap owner (`nspenterprises24@gmail.com`) can never be locked
   out. Settlement writes = owner only.
+- **`meta/counters`** (number allocation): read/write by **manager/owner only** — a gaadiwala
+  never allocates a number (his entries are PENDING and numberless until Passed).
 - Anonymous stays for baseline sync only (no sensitive reads).
 
 > Rules are deployed via `attendance-app/jobs/deployRules.js` after pulling live (so the
@@ -179,20 +216,28 @@ constraint, so the layout is fixed here:
 
 ## 9. Data model changes (additive, back-compatible)
 
-- `entrySchema`: add `status` (`pending|needs_correction|passed|voided`, default `passed`
-  so existing rows stay in the hisab), `revision` (int, +1 each edit), `submittedBy`,
-  `approvedBy`, `approvedAt`, `voidReason`, `correctionReason` (for Return), `adjustsChallanNo`
-  (for adjustment lines). `challanNo` stays (set on Pass; continuous `TF-0001`).
-- `advanceSchema`: add `paymentNo` (sequential, continuous `PAY-0001`) + `factoryId`.
-- `settlementSchema`: add a **snapshot** — `tripCount`, `totalPayments`, `closingBalance`
-  (alongside existing totals) + `pdfHash` (SHA-256 of the generated statement, so the paid
-  figure is provable later) + `factoryId`.
+- `entrySchema`: add `status` (`pending|needs_correction|passed|voided|cancelled`, default
+  `passed` so existing rows stay in the hisab), `revision` (int, +1 each edit — also drives
+  concurrency check §4.2), `submittedBy`, `approvedBy`, `approvedAt`, `voidReason`,
+  `correctionReason`, `cancelReason`, `adjustsChallanNo`. `challanNo` set on Pass (continuous).
+  **Frozen master snapshot** (§6 review pt.6): `transporterName` at time of entry
+  (`gaadiNumber` and `factoryId` are already stored as values), so renaming a gaadiwala later
+  never changes old records/reports.
+- `advanceSchema`: add `paymentNo` (continuous `PAY-0001`), `factoryId`, `transporterName`
+  (snapshot). **Reversal = a new reversing payment** (negative, `reversesPaymentNo` links to
+  the original); the original is **never edited** — matches the ledger principle.
+- `settlementSchema`: add `settlementNo` (`SET-0001`), `settledAt`, `settledBy`,
+  `transporterName` (snapshot), plus the totals **snapshot** — `tripCount`, `totalPayments`,
+  `closingBalance` + `pdfHash` (SHA-256 of the generated statement, so the paid figure is
+  provable later) + `factoryId`. Historical reports never drift if masters change later.
+- `meta/counters` singleton (§7.1): `{ challan, payment, settlement }` — the atomic counters.
 - `userSchema`: add `role` value `gaadiwala` and a `transporterId` link.
-- Hisab/balance math counts only `status == 'passed'` and not deleted; pending / needs_correction
-  / voided are excluded. Adjustments are normal passed entries flagged with `adjustsChallanNo`.
-- **Duplicate guard:** on entry, warn (non-blocking) if the same `gaadiNumber` + `date` +
-  total already exists for this gaadiwala ("possible duplicate?").
-- **Audit:** every submit/return/pass/void/edit/delete/settle writes a `logs` line —
+- Hisab/balance math counts only `status == 'passed'`; `pending / needs_correction / voided /
+  cancelled` are excluded. Adjustments are normal passed entries flagged with `adjustsChallanNo`.
+- **Duplicate guard (explicit criteria):** on entry, warn — **non-blocking** — if a chakkar
+  already exists with the **same `transporterId` + `gaadiNumber` + `date` + same total** (and,
+  if present, the same first `destinationId`). Shows "possible duplicate?", staff can proceed.
+- **Audit:** every submit/return/pass/void/edit/cancel/settle/reverse writes a `logs` line —
   `action`, `user`, `role`, `timestamp`, `device` (userAgent), `reason` (where applicable),
   and `before`→`after`. (No IP — a client PWA can't capture it reliably without a server.)
 
@@ -200,11 +245,13 @@ constraint, so the layout is fixed here:
 
 ## 10. Staged delivery (ship safely, never break the live app)
 
-1. **Stage 1 — Approval queue + audit (no gaadiwala login yet):** `status` +
-   `needs_correction`, a "Pending review" screen for N/A (Pass / Return / Void with
-   mandatory reason), `revision` + before→after audit log, payment numbers, duplicate
-   warning, balance counts passed-only. Staff entry still direct. **Flat layout retained —
-   no migration.** *(Usable immediately; lowest risk.)*
+1. **Stage 1 — Approval queue + audit (no gaadiwala login yet):** `status`
+   (+`needs_correction`, `cancelled`), the **approval home** (§6.1) + "Pending review" queue
+   for N/A (Pass / Return / Void, mandatory reason), `revision` + **optimistic-concurrency**
+   check + before→after audit log, **atomic** challan/payment/settlement numbers (§7.1),
+   master-name snapshots, duplicate warning, Cancel (not delete), payment reversal = reversing
+   entry, balance counts passed-only. Staff entry still direct. **Flat layout retained — no
+   migration.** *(Usable immediately; lowest risk.)*
 2. **Stage 2 — Gaadiwala login + own view:** `gaadiwala` role + `transporterId` link; Google
    login; gaadiwala entry (→pending) + his dashboard (buckets + payments + balance, current
    period), loaded via the **scoped `where('transporterId','==',id)` query** from §8.1.
@@ -238,6 +285,22 @@ Not planned:
 
 ---
 
+## 11a. Business continuity / disaster recovery (guidance)
+
+Not app logic, but part of running this as a real system:
+
+- **Backups:** the data lives in the shared `unico-operations` Firestore. Turn on a
+  **scheduled export** (daily) to Google Cloud Storage. *Honest note:* scheduled/PITR exports
+  need the **Blaze** plan — tie this to the pending [[firestore-quota-blaze]] decision; until
+  then, a periodic manual export script (from `attendance-app/jobs`, admin SDK) is the interim.
+- **Audit log = append-only**, never edited/deleted; retain indefinitely (it's tiny).
+- **PDF statements** are **regenerable** from the data, and each settlement stores a `pdfHash`,
+  so a re-generated statement can be proven identical to the one paid against.
+- **Recovery:** restore the Firestore export; app is stateless (GitHub Pages) and redeploys
+  from git.
+
+---
+
 ## 12. Decisions locked (owner, 2026-06-30 → 07-01)
 
 - Gaadiwala login = **Google**. Edit settled = **adjustment in new period**. Anshul's window
@@ -253,3 +316,9 @@ Not planned:
   merge, `accounts` role) **deferred**, not built for launch.
 - Confirmed: Anshul **can** record payments. `factoryId` already on records (extended to
   payments/settlements).
+- 2nd external review (9.8/10) folded in: **Cancelled** status (no hard-delete of passed),
+  **atomic** number allocation via Firestore transaction (the one must-fix — no backend
+  needed), **optimistic concurrency** via `revision`, **reversing-entry** payment reversal,
+  **frozen master-name snapshots** on records, richer **settlement metadata**, explicit
+  **duplicate criteria**, **approval home** (§6.1), **numbering-strategy** edge cases (§7.2),
+  and a **continuity/DR** section (§11a).
