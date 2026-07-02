@@ -96,6 +96,7 @@ export const settlementSchema = [
 export const userSchema = [
   field({ name: 'email',  label: 'Email',  type: 'text',   default: '', required: true }),
   field({ name: 'name',   label: 'Name',   type: 'text',   default: '' }),
-  field({ name: 'role',   label: 'Role',   type: 'text',   default: 'manager' }), // owner | manager
+  field({ name: 'role',   label: 'Role',   type: 'text',   default: 'manager' }), // owner | manager | gaadiwala
+  field({ name: 'transporterId', label: 'Gaadiwala link', type: 'text', default: '' }), // set when role=gaadiwala
   field({ name: 'active', label: 'Active', type: 'toggle', default: true }),
 ]

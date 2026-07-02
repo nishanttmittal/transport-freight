@@ -20,8 +20,15 @@ export function resolveRole(email, users) {
   const u = (users || []).find(u => (u.email || '').toLowerCase() === e && u.active !== false)
   if (!u) return null
   if (u.role === 'owner') return 'owner'
+  if (u.role === 'gaadiwala') return 'gaadiwala'
   if (u.role === 'staff' || u.role === 'employee' || u.role === 'welder') return 'staff'
   return 'manager'
+}
+
+/** The transporter a gaadiwala login is linked to ('' for non-gaadiwala). */
+export function resolveTransporterId(email, users) {
+  const u = (users || []).find(u => (u.email || '').toLowerCase() === (email || '').toLowerCase())
+  return (u && u.transporterId) || ''
 }
 
 /** Display name for the signed-in user (floor attribution). */
@@ -59,7 +66,7 @@ export default function AuthGate({ title = 'UNICO', children }) {
   }
 
   // Signed in with Google AND has a role → render the console.
-  if (email && role) return children({ role, email, name: resolveName(email, users.list), signOut: doSignOut })
+  if (email && role) return children({ role, email, name: resolveName(email, users.list), transporterId: resolveTransporterId(email, users.list), signOut: doSignOut })
 
   // Signed in with Google but NOT authorised.
   if (email && !role) {
