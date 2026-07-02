@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
-import { countsInHisab } from './src/modules/freight/logic/status.js'
+import { countsInHisab, applyTransition } from './src/modules/freight/logic/status.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
 
@@ -75,5 +75,18 @@ const passEntries = [
   { transporterId: 't1', date: '2026-07-01', status: 'cancelled', freight: 9000 },
 ]
 assert.equal(transporterTotals(passEntries, [], 't1', {}).freight, 1000) // only the passed one
+
+// ---- Stage 1: state transitions ----
+const passed2 = applyTransition({ status: 'pending', revision: 0 }, 'pass', { by: 'Anshul', role: 'manager', challanNo: 7 })
+assert.equal(passed2.status, 'passed'); assert.equal(passed2.challanNo, 7); assert.equal(passed2.approvedBy, 'Anshul')
+assert.throws(() => applyTransition({ status: 'pending' }, 'void', { by: 'Anshul' }), /reason/i)
+const voided2 = applyTransition({ status: 'pending' }, 'void', { by: 'Anshul', reason: 'duplicate' })
+assert.equal(voided2.status, 'voided'); assert.equal(voided2.voidReason, 'duplicate')
+const ret2 = applyTransition({ status: 'pending' }, 'return', { by: 'Anshul', reason: 'wrong amount' })
+assert.equal(ret2.status, 'needs_correction'); assert.equal(ret2.correctionReason, 'wrong amount')
+assert.throws(() => applyTransition({ status: 'passed' }, 'cancel', { by: 'N' }), /reason/i)
+const canc2 = applyTransition({ status: 'passed', challanNo: 7 }, 'cancel', { by: 'Nishant', reason: 'wrong trip' })
+assert.equal(canc2.status, 'cancelled'); assert.equal(canc2.cancelReason, 'wrong trip'); assert.equal(canc2.challanNo, 7)
+assert.throws(() => applyTransition({ status: 'cancelled' }, 'pass', {}), /illegal|cannot/i)
 
 console.log('ALL FREIGHT CALC TESTS PASSED')

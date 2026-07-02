@@ -47,6 +47,15 @@ export const entrySchema = [
   field({ name: 'extraPoint',    label: 'Extra Point', type: 'number', default: 0 }),
   field({ name: 'remarks',       label: 'Remarks',     type: 'text',   default: '' }),
   field({ name: 'deleted',       label: 'Deleted',     type: 'toggle', default: false, inList: false }),
+  // approval workflow (hidden)
+  field({ name: 'submittedBy',      label: 'Submitted By',   default: '', inList: false }),
+  field({ name: 'approvedBy',       label: 'Approved By',    default: '', inList: false }),
+  field({ name: 'approvedAt',       label: 'Approved At',    default: '', inList: false }),
+  field({ name: 'voidReason',       label: 'Void Reason',    default: '', inList: false }),
+  field({ name: 'correctionReason', label: 'Correction',     default: '', inList: false }),
+  field({ name: 'cancelReason',     label: 'Cancel Reason',  default: '', inList: false }),
+  field({ name: 'adjustsChallanNo', label: 'Adjusts',        type: 'number', default: 0, inList: false }),
+  field({ name: 'transporterName',  label: 'Gaadiwala Name', default: '', inList: false }),
   // backbone / audit (hidden)
   field({ name: 'batchId',       label: 'Batch ID',        default: '', inList: false }),
   field({ name: 'sourceApp',     label: 'Source App',      default: 'transportfreight', inList: false }),
