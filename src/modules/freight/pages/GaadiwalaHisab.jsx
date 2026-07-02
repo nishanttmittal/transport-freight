@@ -22,6 +22,30 @@ function groupBatches(rows) {
   }))
 }
 
+function Chakkar({ b, tone = 'text-slate-800', children }) {
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-semibold truncate ${tone}`}>{b.challanNo ? fmtChallan(b.challanNo) + ' · ' : ''}{fmtDate(b.date)}{b.gaadiNumber ? ' · ' + b.gaadiNumber : ''}</div>
+          <div className="text-xs text-slate-400">{b.rows.length} drop{b.rows.length > 1 ? 's' : ''}{b.reason ? ` · ${b.reason}` : ''}</div>
+        </div>
+        <div className="text-sm font-bold font-mono text-slate-800">₹{fmtNum(b.total)}</div>
+      </div>
+      {children && <div className="flex gap-2 mt-2">{children}</div>}
+    </div>
+  )
+}
+
+function Section({ title, count, children }) {
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-100 font-bold text-slate-700 text-sm">{title}{count ? ` (${count})` : ''}</div>
+      {children}
+    </Card>
+  )
+}
+
 export default function GaadiwalaHisab({ transporterId, onEdit }) {
   const { entries, advances, settlements } = useFreight()
   const { msg, show } = useToast()
@@ -43,26 +67,6 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
     b.rows.forEach(r => entries.update(r.id, { deleted: true }))
     show('Removed')
   }
-
-  const Chakkar = ({ b, tone = 'text-slate-800', children }) => (
-    <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <div className={`text-sm font-semibold truncate ${tone}`}>{b.challanNo ? fmtChallan(b.challanNo) + ' · ' : ''}{fmtDate(b.date)}{b.gaadiNumber ? ' · ' + b.gaadiNumber : ''}</div>
-          <div className="text-xs text-slate-400">{b.rows.length} drop{b.rows.length > 1 ? 's' : ''}{b.reason ? ` · ${b.reason}` : ''}</div>
-        </div>
-        <div className="text-sm font-bold font-mono text-slate-800">₹{fmtNum(b.total)}</div>
-      </div>
-      {children && <div className="flex gap-2 mt-2">{children}</div>}
-    </div>
-  )
-
-  const Section = ({ title, count, children }) => (
-    <Card className="p-0 overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100 font-bold text-slate-700 text-sm">{title}{count ? ` (${count})` : ''}</div>
-      {children}
-    </Card>
-  )
 
   return (
     <div className="max-w-lg mx-auto p-4 space-y-4">
