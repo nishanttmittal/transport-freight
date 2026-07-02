@@ -12,32 +12,39 @@ import { thresholdLevel } from '../logic/calc'
 import { ADMIN_PASSWORD, THRESHOLD_LEVELS, OWNER_EMAILS } from '../config'
 
 function Users() {
-  const { users } = useFreight()
+  const { users, transporters } = useFreight()
   const { msg, show } = useToast()
-  const [form, setForm] = useState({ email: '', name: '', role: 'manager' })
+  const [form, setForm] = useState({ email: '', name: '', role: 'manager', transporterId: '' })
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
+  const tActive = (transporters.list || []).filter(t => !t.deleted && t.active !== false)
+  const tName = (id) => transporters.list.find(t => t.id === id)?.name || '—'
+  const roleLabel = (r) => r === 'owner' ? 'Owner' : r === 'gaadiwala' ? 'Gaadiwala' : 'Staff'
   const add = () => {
     const email = form.email.trim().toLowerCase()
     if (!email) return show('Enter an email', 2000)
-    users.insert({ email, name: form.name.trim(), role: form.role, active: true })
-    setForm({ email: '', name: '', role: 'manager' }); show('User added ✓')
+    if (form.role === 'gaadiwala' && !form.transporterId) return show('Pick which gaadiwala', 2200)
+    users.insert({ email, name: form.name.trim(), role: form.role, transporterId: form.role === 'gaadiwala' ? form.transporterId : '', active: true })
+    setForm({ email: '', name: '', role: 'manager', transporterId: '' }); show('User added ✓')
   }
   const list = (users.list || []).filter(u => !u.deleted)
   return (
     <Card className="p-4 space-y-3">
       <Toast msg={msg} />
       <div className="font-bold text-slate-700">Users &amp; Access</div>
-      <p className="text-xs text-slate-400">Owner (you) is always {OWNER_EMAILS[0]}. Add staff who enter freight as “manager”.</p>
+      <p className="text-xs text-slate-400">Owner (you) is always {OWNER_EMAILS[0]}. Staff = enter/approve freight. Gaadiwala = his own login (submits trips for approval).</p>
       <TextInput value={form.email} placeholder="email@gmail.com" onChange={set('email')} />
       <div className="flex gap-2">
         <TextInput value={form.name} placeholder="Name" onChange={set('name')} />
-        <Select options={[{ value: 'manager', label: 'Staff' }, { value: 'owner', label: 'Owner' }]} value={form.role} onChange={set('role')} className="max-w-[40%]" />
+        <Select options={[{ value: 'manager', label: 'Staff' }, { value: 'owner', label: 'Owner' }, { value: 'gaadiwala', label: 'Gaadiwala' }]} value={form.role} onChange={set('role')} className="max-w-[45%]" />
       </div>
+      {form.role === 'gaadiwala' && (
+        <Select options={[{ value: '', label: 'Link to which gaadiwala…' }, ...tActive.map(t => ({ value: t.id, label: t.name }))]} value={form.transporterId} onChange={set('transporterId')} />
+      )}
       <Button onClick={add} className="w-full">Add user</Button>
       <div className="divide-y divide-slate-100">
         {list.map(u => (
           <div key={u.id} className="py-2.5 flex items-center gap-2">
-            <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{u.name || u.email}</div><div className="text-xs text-slate-400 truncate">{u.email} · {u.role === 'owner' ? 'Owner' : 'Staff'}</div></div>
+            <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{u.name || u.email}</div><div className="text-xs text-slate-400 truncate">{u.email} · {roleLabel(u.role)}{u.role === 'gaadiwala' && u.transporterId ? ` (${tName(u.transporterId)})` : ''}</div></div>
             <button onClick={() => users.update(u.id, { active: !(u.active !== false) })} className={`text-xs font-bold rounded-lg px-2.5 py-1.5 ${u.active !== false ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{u.active !== false ? 'Active' : 'Off'}</button>
           </div>
         ))}
