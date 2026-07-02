@@ -47,6 +47,7 @@ export default function Advances({ owner = false, by = '', level = '' }) {
 
   // Reversal = a NEW reversing payment (negative). The original is never edited.
   const reverse = (a) => {
+    if (active(advances.list).some(x => x.reversal && Number(x.reversesPaymentNo) === Number(a.paymentNo))) return show('Already reversed', 2200)
     if (lockedOn(settlements.list, a.transporterId, a.date)) return show('Settled — cannot reverse', 2600)
     if (!window.confirm(`Reverse ₹${fmtNum(a.amount)} advance (${fmtPayment(a.paymentNo)}) to ${tName(a.transporterId)}?`)) return
     const rev = { ...makeReversal(a, by), transporterName: tName(a.transporterId), factoryId: 'main' }

@@ -10,7 +10,8 @@ import { fmtNum, fmtDate, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { ledgerLines, transporterTotals, unsettledFrom, thresholdLevel } from '../logic/calc'
 import { levelStyle } from '../logic/balance'
-import { shareStatementPdf, statementHash } from '../logic/pdf'
+import { shareStatementPdf } from '../logic/pdf'
+import { canonicalSettlement, sha256hex } from '../logic/hash'
 import { THRESHOLD_LEVELS, fmtChallan } from '../config'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
@@ -42,13 +43,19 @@ export default function Hisab({ owner = false, by = '' }) {
     if (!lines.length) return show('Nothing to settle', 2000)
     if (!window.confirm(`Settle ${transporter.name}'s hisab up to today?\n\nBalance ₹${fmtNum(totals.balance)} will be locked. New entries start a fresh period.`)) return
     const settlementNo = await allocateNumber('settlement')
-    const period = { from, to: todayStr() }
-    const pdfHash = await statementHash({ transporterName: transporter.name, lines, destName, totals, period })
+    const to = todayStr()
     const tripCount = lines.filter(l => l.kind === 'freight').length
+    const snapshot = {
+      transporterId: tid, periodFrom: from, periodTo: to,
+      totalFreight: totals.freight, totalPayments: totals.advances, closingBalance: totals.balance,
+      settlementNo, transporterName: transporter.name,
+      lineIds: lines.map(l => l.id),
+    }
+    const settlementHash = await sha256hex(canonicalSettlement(snapshot)) // reproducible fingerprint
     settlements.insert({
       transporterId: tid,
       periodFrom: from,
-      periodTo: todayStr(),
+      periodTo: to,
       totalFreight: totals.freight,
       totalAdvances: totals.advances,
       balance: totals.balance,
@@ -61,7 +68,8 @@ export default function Hisab({ owner = false, by = '' }) {
       tripCount,
       totalPayments: totals.advances,
       closingBalance: totals.balance,
-      pdfHash,
+      settlementHash,
+      pdfHash: '',
       factoryId: 'main',
     })
     transporters.update(tid, { runningBalance: 0, alertedLevel: 0 })
