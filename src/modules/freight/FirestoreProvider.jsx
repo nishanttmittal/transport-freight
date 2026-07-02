@@ -4,11 +4,13 @@
  * destinations are added in the app).
  */
 import { useEffect, useState, useCallback } from 'react'
-import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch } from 'firebase/firestore'
+import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch, runTransaction } from 'firebase/firestore'
 import { db, paths, ensureSignedIn, watchAuth } from '../../core/db/firebase'
 import { makeNormalizer } from '../../core/schema/field'
 import { makeId } from '../../core/db/repository'
 import { transporterSchema, destinationSchema, entrySchema, advanceSchema, settlementSchema, userSchema } from './schema'
+import { nextFromCounters, COUNTER_START } from './logic/counters'
+import { isStale } from './logic/status'
 import { lastUsedStore } from './data'
 import { FreightCtx } from './FreightContext'
 
@@ -44,6 +46,30 @@ const normEntry       = makeNormalizer(entrySchema)
 const normAdvance     = makeNormalizer(advanceSchema)
 const normSettlement  = makeNormalizer(settlementSchema)
 const normUser        = makeNormalizer(userSchema)
+
+/** Allocate the next reference number atomically (server-side transaction). */
+async function allocateNumber(kind) {
+  return await runTransaction(db, async (tx) => {
+    const ref = paths.counters()
+    const snap = await tx.get(ref)
+    const cur = snap.exists() ? snap.data() : {}
+    const next = nextFromCounters(cur, kind, COUNTER_START[kind])
+    tx.set(ref, { [kind]: next }, { merge: true })
+    return next
+  })
+}
+
+/** Update a doc only if its stored `revision` still matches (optimistic lock). */
+async function updateGuarded(docPathFn, id, expectedRevision, patch) {
+  return await runTransaction(db, async (tx) => {
+    const ref = docPathFn(id)
+    const snap = await tx.get(ref)
+    const actual = snap.exists() ? (Number(snap.data().revision) || 0) : 0
+    if (isStale(expectedRevision, actual)) return { ok: false, reason: 'stale' }
+    tx.set(ref, { ...patch, revision: actual + 1, updatedAt: new Date().toISOString() }, { merge: true })
+    return { ok: true }
+  })
+}
 
 export function FirestoreProvider({ children }) {
   const [ready, setReady] = useState(false)
@@ -96,8 +122,10 @@ export function FirestoreProvider({ children }) {
   }
 
   const value = {
-    transporters, destinations, entries, advances, settlements, users, logs,
-    lastUsed: lastUsedStore, log,
+    transporters, destinations,
+    entries: { ...entries, updateGuarded: (id, rev, patch) => updateGuarded(paths.entry, id, rev, patch) },
+    advances, settlements, users, logs,
+    lastUsed: lastUsedStore, log, allocateNumber,
     cloud: { connected: !error, error },
   }
   return <FreightCtx.Provider value={value}>{children}</FreightCtx.Provider>

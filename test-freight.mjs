@@ -5,6 +5,7 @@
 import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
 import { countsInHisab, applyTransition } from './src/modules/freight/logic/status.js'
+import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
 
@@ -88,5 +89,11 @@ assert.throws(() => applyTransition({ status: 'passed' }, 'cancel', { by: 'N' })
 const canc2 = applyTransition({ status: 'passed', challanNo: 7 }, 'cancel', { by: 'Nishant', reason: 'wrong trip' })
 assert.equal(canc2.status, 'cancelled'); assert.equal(canc2.cancelReason, 'wrong trip'); assert.equal(canc2.challanNo, 7)
 assert.throws(() => applyTransition({ status: 'cancelled' }, 'pass', {}), /illegal|cannot/i)
+
+// ---- Stage 1: atomic counter allocation (pure part) ----
+assert.equal(nextFromCounters({}, 'challan', 1), 1)               // fresh → start
+assert.equal(nextFromCounters({ challan: 5 }, 'challan', 1), 6)   // last+1
+assert.equal(nextFromCounters({ challan: 2 }, 'challan', 1000), 1000) // start wins when higher
+assert.equal(nextFromCounters({ payment: 9 }, 'challan', 1), 1)   // kinds independent
 
 console.log('ALL FREIGHT CALC TESTS PASSED')

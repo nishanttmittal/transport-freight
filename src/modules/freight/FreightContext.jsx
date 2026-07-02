@@ -9,6 +9,7 @@ import { useCollection } from '../../core/hooks/useCollection'
 import { transportersRepo, destinationsRepo, entriesRepo, advancesRepo, settlementsRepo, usersRepo, logsRepo, lastUsedStore } from './data'
 import { isFirebaseConfigured } from '../../core/db/firebaseConfig'
 import { FirestoreProvider } from './FirestoreProvider'
+import { nextFromCounters, COUNTER_START } from './logic/counters'
 
 const Ctx = createContext(null)
 export { Ctx as FreightCtx }
@@ -32,9 +33,19 @@ export function LocalFreightProvider({ children }) {
     logs.insert({ ts: new Date().toISOString(), action, detail, by, ref })
   }, [logs])
 
+  // Offline mode has no transactions — allocate from a lastUsed-backed counter.
+  const allocateNumber = useCallback(async (kind) => {
+    const c = lastUsedStore.get() || {}
+    const n = nextFromCounters(c.counters || {}, kind, COUNTER_START[kind])
+    lastUsedStore.set({ ...c, counters: { ...(c.counters || {}), [kind]: n } })
+    return n
+  }, [])
+
   const value = {
-    transporters, destinations, entries, advances, settlements, users, logs,
-    lastUsed: lastUsedStore, log,
+    transporters, destinations,
+    entries: { ...entries, updateGuarded: async (id, _rev, patch) => { entries.update(id, patch); return { ok: true } } },
+    advances, settlements, users, logs,
+    lastUsed: lastUsedStore, log, allocateNumber,
     cloud: { connected: false, error: '' },
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

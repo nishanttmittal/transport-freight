@@ -18,6 +18,11 @@ export function countsInHisab(e) {
   return s === STATUS.passed
 }
 
+/** Optimistic-concurrency check: true if the stored revision moved on. */
+export function isStale(expected, actual) {
+  return (Number(expected) || 0) !== (Number(actual) || 0)
+}
+
 const nowIso = () => new Date().toISOString()
 const need = (v, msg) => { if (!v || !String(v).trim()) throw new Error(msg) }
 

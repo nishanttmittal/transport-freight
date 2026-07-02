@@ -57,6 +57,7 @@ export const paths = {
   user: (id) => cdoc('users', id),
   logs: () => coll('logs'),
   logDoc: (id) => cdoc('logs', id),
+  counters: () => cdoc('meta', 'counters'),
 }
 
 export function ensureSignedIn() {
