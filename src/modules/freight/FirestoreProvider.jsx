@@ -4,11 +4,12 @@
  * destinations are added in the app).
  */
 import { useEffect, useState, useCallback } from 'react'
-import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch, runTransaction } from 'firebase/firestore'
+import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch, runTransaction, query, where } from 'firebase/firestore'
 import { db, paths, ensureSignedIn, watchAuth } from '../../core/db/firebase'
 import { makeNormalizer } from '../../core/schema/field'
 import { makeId } from '../../core/db/repository'
 import { transporterSchema, destinationSchema, entrySchema, advanceSchema, settlementSchema, userSchema } from './schema'
+import { OWNER_EMAILS } from './config'
 import { nextFromCounters, COUNTER_START } from './logic/counters'
 import { isStale } from './logic/status'
 import { lastUsedStore } from './data'
@@ -16,16 +17,20 @@ import { FreightCtx } from './FreightContext'
 
 // authKey re-subscribes the listener when the signed-in user changes (anon →
 // Google). Tolerates permission-denied by leaving the collection empty.
-function useCloudCollection(collPath, docPath, normalize, authKey) {
+// `scope` ({field,value}) narrows the listen to a where() query — used so a
+// gaadiwala reads ONLY his own transporterId (required once rules restrict him).
+function useCloudCollection(collPath, docPath, normalize, authKey, scope = null) {
   const [list, setList] = useState([])
+  const scopeVal = scope ? scope.value : ''
   useEffect(() => {
+    const src = scope ? query(collPath(), where(scope.field, '==', scope.value)) : collPath()
     const unsub = onSnapshot(
-      collPath(),
+      src,
       (snap) => setList(snap.docs.map(d => normalize({ id: d.id, ...d.data() }))),
       () => setList([])
     )
     return unsub
-  }, [authKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authKey, scopeVal]) // eslint-disable-line react-hooks/exhaustive-deps
   return {
     list,
     insert: (rec) => { const id = rec.id || makeId('r'); const now = new Date().toISOString(); const row = { createdAt: now, updatedAt: now, ...rec, id }; setDoc(docPath(id), row); return row },
@@ -76,15 +81,29 @@ export function FirestoreProvider({ children }) {
   const [timedOut, setTimedOut] = useState(false)
   const [error, setError] = useState('')
   const [authKey, setAuthKey] = useState('anon')
-  useEffect(() => watchAuth((u) => setAuthKey(u ? `${u.uid}:${u.email || ''}` : 'none')), [])
+  const [authEmail, setAuthEmail] = useState('')
+  useEffect(() => watchAuth((u) => {
+    setAuthKey(u ? `${u.uid}:${u.email || ''}` : 'none')
+    setAuthEmail(u && !u.isAnonymous ? (u.email || '').toLowerCase() : '')
+  }), [])
 
+  // masters + users load whole-collection (any signed-in may read them)
   const transporters = useCloudCollection(paths.transporters, paths.transporter, normTransporter, authKey)
   const destinations = useCloudCollection(paths.destinations, paths.destination, normDestination, authKey)
-  const entries      = useCloudCollection(paths.entries, paths.entry, normEntry, authKey)
-  const advances     = useCloudCollection(paths.advances, paths.advance, normAdvance, authKey)
-  const settlements  = useCloudCollection(paths.settlements, paths.settlementDoc, normSettlement, authKey)
   const users        = useCloudCollection(paths.users, paths.user, normUser, authKey)
   const logs         = useCloudCollection(paths.logs, paths.logDoc, (r) => r, authKey)
+
+  // If the signed-in user is a gaadiwala, scope his trip/payment/settlement reads
+  // to his own transporterId (matches the restrictive rules; whole-collection
+  // reads would be denied for him). Owner/manager keep whole-collection.
+  const me = users.list.find(u => (u.email || '').toLowerCase() === authEmail)
+  const isBootstrapOwner = OWNER_EMAILS.map(x => x.toLowerCase()).includes(authEmail)
+  const gTid = (me && me.role === 'gaadiwala' && me.active !== false && !isBootstrapOwner) ? (me.transporterId || '') : ''
+  const scope = gTid ? { field: 'transporterId', value: gTid } : null
+
+  const entries      = useCloudCollection(paths.entries, paths.entry, normEntry, authKey, scope)
+  const advances     = useCloudCollection(paths.advances, paths.advance, normAdvance, authKey, scope)
+  const settlements  = useCloudCollection(paths.settlements, paths.settlementDoc, normSettlement, authKey, scope)
 
   useEffect(() => {
     let done = false
