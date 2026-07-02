@@ -21,14 +21,19 @@ const ADD = '__add__'
 const active = (list) => (list || []).filter(x => !x.deleted && x.active !== false)
 const emptyDrop = () => ({ destinationId: '', bags: '', pvtMarka: '', freight: '', lrCharge: '', unloading: '', misc: '', extraPoint: '', remarks: '' })
 
-export default function Entry({ by = '', level = '' }) {
+const dropFromRow = (r) => ({ destinationId: r.destinationId || '', bags: r.bags ? String(r.bags) : '', pvtMarka: r.pvtMarka || '', freight: r.freight ? String(r.freight) : '', lrCharge: r.lrCharge ? String(r.lrCharge) : '', unloading: r.unloading ? String(r.unloading) : '', misc: r.misc ? String(r.misc) : '', extraPoint: r.extraPoint ? String(r.extraPoint) : '', remarks: r.remarks || '' })
+
+export default function Entry({ by = '', level = '', pendingMode = false, lockTransporterId = '', lockTransporterName = '', editBatch = null, onDone = null }) {
   const { transporters, destinations, entries, settlements, lastUsed, logs, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
+  const editing = Array.isArray(editBatch) && editBatch.length > 0
 
   const remembered = lastUsed.get() || {}
-  const [veh, setVeh] = useState({ date: todayStr(), transporterId: '', gaadiNumber: remembered.gaadiNumber || '' })
-  const [drops, setDrops] = useState([emptyDrop()])
+  const [veh, setVeh] = useState(() => editing
+    ? { date: editBatch[0].date, transporterId: editBatch[0].transporterId, gaadiNumber: editBatch[0].gaadiNumber || '' }
+    : { date: todayStr(), transporterId: lockTransporterId || '', gaadiNumber: remembered.gaadiNumber || '' })
+  const [drops, setDrops] = useState(() => editing ? editBatch.map(dropFromRow) : [emptyDrop()])
   // inline "add new master": null | { type:'transporter' } | { type:'destination', i }
   const [adding, setAdding] = useState(null)
   const [newName, setNewName] = useState('')
@@ -65,62 +70,80 @@ export default function Entry({ by = '', level = '' }) {
   const addDrop = () => setDrops(ds => [...ds, emptyDrop()])
   const removeDrop = (i) => setDrops(ds => ds.filter((_, idx) => idx !== i))
 
+  const rowFields = (d) => ({
+    destinationId: d.destinationId, bags: Number(d.bags) || 0, pvtMarka: d.pvtMarka.trim(),
+    freight: Number(d.freight) || 0, lrCharge: Number(d.lrCharge) || 0, unloading: Number(d.unloading) || 0,
+    misc: Number(d.misc) || 0, extraPoint: Number(d.extraPoint) || 0, remarks: d.remarks.trim(),
+  })
+
   const save = async () => {
     if (!veh.transporterId) return show('Pick a gaadiwala', 2000)
     for (let i = 0; i < drops.length; i++) {
       if (!drops[i].destinationId) return show(`Pick transport for drop ${i + 1}`, 2200)
     }
-    if (lockedOn(settlements.list, veh.transporterId, veh.date)) return show('This period is settled & locked', 2600)
-
-    const dup = findDuplicate(entries.list, { transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), date: veh.date, ...drops[0], destinationId: drops[0].destinationId })
-    if (dup && !window.confirm(`Possible duplicate of ${fmtChallan(dup.challanNo)} (same gaadi, date, amount). Save anyway?`)) return
+    if (!editing && lockedOn(settlements.list, veh.transporterId, veh.date)) return show('This period is settled & locked', 2600)
     if (busy) return
+    const gName = editing ? (editBatch[0].transporterName || '') : (lockTransporterName || tList.find(t => t.id === veh.transporterId)?.name || '')
+
+    // EDIT MODE — update existing rows and resubmit as pending.
+    if (editing) {
+      setBusy(true)
+      try {
+        const n = Math.max(drops.length, editBatch.length)
+        for (let i = 0; i < n; i++) {
+          const d = drops[i]; const row = editBatch[i]
+          if (row && d) {
+            const res = await entries.updateGuarded(row.id, row.revision, { date: veh.date, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), status: 'pending', correctionReason: '' })
+            if (!res.ok) { show('Refresh — changed by someone else', 2600); return }
+          } else if (row && !d) {
+            entries.update(row.id, { deleted: true })
+          } else if (!row && d) {
+            entries.insert({ date: veh.date, status: 'pending', revision: 0, challanNo: 0, submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), batchId: editBatch[0].batchId, createdByUser: by || '', sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false })
+          }
+        }
+        log('entry.resubmit', `${gName} ${fmtDate(veh.date)}`, by, editBatch[0].batchId)
+        logs.insert(auditLine('entry.resubmit', { by, role: level, after: { batchId: editBatch[0].batchId }, device: navigator.userAgent }))
+        show('Resubmitted for approval ✓', 2400)
+        onDone && onDone()
+      } finally { setBusy(false) }
+      return
+    }
+
+    // NEW — gaadiwala pending submission OR staff direct-passed entry.
+    const dup = findDuplicate(entries.list, { transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), date: veh.date, ...drops[0], destinationId: drops[0].destinationId })
+    if (dup && !window.confirm(`Possible duplicate of ${dup.challanNo ? fmtChallan(dup.challanNo) : 'a recent trip'} (same gaadi, date, amount). Save anyway?`)) return
     setBusy(true)
     try {
-    const bId = makeId('batch')
-    const challan = await allocateNumber('challan')
-    const gName = tList.find(t => t.id === veh.transporterId)?.name || ''
-    let grand = 0
-    drops.forEach((d) => {
-      const rec = {
-        date: veh.date,
-        challanNo: challan,
-        status: 'passed',
-        revision: 0,
-        submittedBy: by || '',
-        transporterName: gName,
-        transporterId: veh.transporterId,
-        gaadiNumber: veh.gaadiNumber.trim(),
-        destinationId: d.destinationId,
-        bags: Number(d.bags) || 0,
-        pvtMarka: d.pvtMarka.trim(),
-        freight: Number(d.freight) || 0,
-        lrCharge: Number(d.lrCharge) || 0,
-        unloading: Number(d.unloading) || 0,
-        misc: Number(d.misc) || 0,
-        extraPoint: Number(d.extraPoint) || 0,
-        remarks: d.remarks.trim(),
-        batchId: bId,
-        createdByRole: level || '',
-        createdByUser: by || '',
-        sourceApp: 'transportfreight',
-        workflowStage: 'transport',
-        factoryId: 'main',
-        deleted: false,
+      const bId = makeId('batch')
+      const challan = pendingMode ? 0 : await allocateNumber('challan')
+      let grand = 0
+      drops.forEach((d) => {
+        const rec = {
+          date: veh.date, challanNo: challan, status: pendingMode ? 'pending' : 'passed', revision: 0,
+          submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId,
+          gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d),
+          batchId: bId, createdByRole: level || '', createdByUser: by || '',
+          sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false,
+        }
+        grand += entryTotal(rec)
+        entries.insert(rec)
+      })
+      const n = drops.length
+      lastUsed.set({ ...(lastUsed.get() || {}), gaadiNumber: veh.gaadiNumber })
+      if (pendingMode) {
+        log('entry.submit', `${gName} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
+        logs.insert(auditLine('entry.submit', { by, role: level, after: { total: grand, drops: n }, device: navigator.userAgent }))
+        setVeh({ date: veh.date, transporterId: lockTransporterId || '', gaadiNumber: '' })
+        setDrops([emptyDrop()])
+        show(`Sent for approval ✓ · ${n} drop${n > 1 ? 's' : ''}`, 2600)
+      } else {
+        const crossed = applyBalance(transporters, veh.transporterId, +grand)
+        log('entry.add', `${fmtChallan(challan)} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
+        logs.insert(auditLine('entry.add', { by, role: level, after: { challanNo: challan, total: grand, drops: n }, device: navigator.userAgent }))
+        setVeh({ date: veh.date, transporterId: '', gaadiNumber: '' })
+        setDrops([emptyDrop()])
+        show(crossed ? `Saved ${fmtChallan(challan)} · ${gName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
       }
-      grand += entryTotal(rec)
-      entries.insert(rec)
-    })
-    const crossed = applyBalance(transporters, veh.transporterId, +grand)
-    const n = drops.length
-    log('entry.add', `${fmtChallan(challan)} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
-    logs.insert(auditLine('entry.add', { by, role: level, after: { challanNo: challan, total: grand, drops: n }, device: navigator.userAgent }))
-    lastUsed.set({ ...(lastUsed.get() || {}), gaadiNumber: veh.gaadiNumber })
-
-    // reset for the next vehicle (keep the date — usually same day)
-    setVeh({ date: veh.date, transporterId: '', gaadiNumber: '' })
-    setDrops([emptyDrop()])
-    show(crossed ? `Saved ${fmtChallan(challan)} · ${gName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
     } finally { setBusy(false) }
   }
 
@@ -130,10 +153,17 @@ export default function Entry({ by = '', level = '' }) {
 
       {/* Vehicle-level: date, transporter, gaadi */}
       <Card className="p-4 space-y-4">
-        <div className="flex items-center justify-between bg-slate-800 text-white rounded-2xl px-4 py-3">
-          <span className="text-xs uppercase tracking-wide text-slate-300 font-bold">Challan No</span>
-          <span className="text-lg font-bold font-mono">{fmtChallan(challanNo)}</span>
-        </div>
+        {pendingMode || editing ? (
+          <div className="flex items-center justify-between bg-indigo-600 text-white rounded-2xl px-4 py-3">
+            <span className="text-xs uppercase tracking-wide text-indigo-200 font-bold">{editing ? 'Editing chakkar' : 'New trip'}</span>
+            <span className="text-sm font-bold">Sent for approval</span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between bg-slate-800 text-white rounded-2xl px-4 py-3">
+            <span className="text-xs uppercase tracking-wide text-slate-300 font-bold">Challan No</span>
+            <span className="text-lg font-bold font-mono">{fmtChallan(challanNo)}</span>
+          </div>
+        )}
         <div>
           <FieldLabel>Date</FieldLabel>
           <div className="mt-1.5"><DateInput value={veh.date} onChange={e => setVehField('date')(e.target.value)} /></div>
@@ -143,7 +173,9 @@ export default function Entry({ by = '', level = '' }) {
         <div>
           <FieldLabel>Gaadiwala</FieldLabel>
           <div className="mt-1.5">
-            {adding?.type === 'transporter' ? (
+            {lockTransporterId ? (
+              <div className="w-full border-2 border-slate-200 bg-slate-50 rounded-2xl px-4 py-4 text-base font-semibold text-slate-700">{lockTransporterName || '—'}</div>
+            ) : adding?.type === 'transporter' ? (
               <div className="flex gap-2">
                 <TextInput autoFocus value={newName} placeholder="New gaadiwala name" onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveNewMaster()} />
                 <Button onClick={saveNewMaster}>Add</Button>
@@ -217,7 +249,8 @@ export default function Entry({ by = '', level = '' }) {
             <div className="text-xs text-slate-500">Total · {drops.length} drop{drops.length > 1 ? 's' : ''}</div>
             <div className="text-2xl font-bold text-slate-800 font-mono">₹{fmtNum(grandTotal)}</div>
           </div>
-          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-8">{busy ? 'Saving…' : 'Save'}</Button>
+          {editing && <Button size="lg" variant="neutral" onClick={() => onDone && onDone()} disabled={busy}>Cancel</Button>}
+          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-6">{busy ? 'Saving…' : (pendingMode ? 'Submit' : editing ? 'Resubmit' : 'Save')}</Button>
         </div>
       </div>
     </div>
