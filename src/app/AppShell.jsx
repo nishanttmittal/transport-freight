@@ -13,6 +13,7 @@ import ModuleHome from './ModuleHome'
 import NavBar from './NavBar'
 import RoleChooser from './RoleChooser'
 import AuthGate from './AuthGate'
+import GaadiwalaView from './GaadiwalaView'
 
 const ROLE_KEY = 'wld:role'
 const STAFF_KEY = 'wld:staff' // remembers this device is a welder ENTRY phone
@@ -119,10 +120,12 @@ export default function AppShell({ moduleId }) {
     return (
       <Provider>
         <AuthGate title={module.title} icon={module.icon}>
-          {({ role, email, name, signOut }) =>
-            role === 'staff'
-              ? <StaffView module={module} operator={name || who} onSwitch={signOut} />
-              : <Console module={module} level={role === 'owner' ? 'owner' : 'incharge'} onSwitch={signOut} userEmail={email} />
+          {({ role, email, name, transporterId, signOut }) =>
+            role === 'gaadiwala'
+              ? <GaadiwalaView transporterId={transporterId} name={name || email} onSwitch={signOut} />
+              : role === 'staff'
+                ? <StaffView module={module} operator={name || who} onSwitch={signOut} />
+                : <Console module={module} level={role === 'owner' ? 'owner' : 'incharge'} onSwitch={signOut} userEmail={email} />
           }
         </AuthGate>
       </Provider>
