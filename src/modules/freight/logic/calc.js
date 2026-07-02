@@ -4,6 +4,8 @@
  * advances and soft-deleted rows. Settled periods lock entries dated on/before
  * the settlement cutoff.
  */
+import { countsInHisab } from './status.js'
+
 const num = (v) => Number(v) || 0
 
 /** All charges on one drop. */
@@ -38,7 +40,7 @@ export function transporterTotals(entries, advances, transporterId, opts = {}) {
   const inRange = (d) => (!from || (d || '') > from) && (!to || (d || '') <= to)
   let freight = 0, adv = 0
   for (const e of (entries || [])) {
-    if (e.transporterId !== transporterId || e.deleted) continue
+    if (e.transporterId !== transporterId || !countsInHisab(e)) continue
     if (!inRange(e.date)) continue
     freight += entryTotal(e)
   }
@@ -81,7 +83,7 @@ export function ledgerLines(entries, advances, transporterId, opts = {}) {
   const inRange = (d) => (!from || (d || '') > from) && (!to || (d || '') <= to)
   const rows = []
   for (const e of (entries || [])) {
-    if (e.transporterId !== transporterId || e.deleted || !inRange(e.date)) continue
+    if (e.transporterId !== transporterId || !countsInHisab(e) || !inRange(e.date)) continue
     rows.push({ id: e.id, date: e.date, kind: 'freight', challanNo: num(e.challanNo), destinationId: e.destinationId, gaadiNumber: e.gaadiNumber, bags: num(e.bags), amount: entryTotal(e), debit: entryTotal(e), credit: 0, _s: e.createdAt || '' })
   }
   for (const a of (advances || [])) {

@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
+import { countsInHisab } from './src/modules/freight/logic/status.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
 
@@ -60,5 +61,19 @@ assert.equal(nextChallanNo([], 1), 1)                                   // none 
 assert.equal(nextChallanNo([], 1001), 1001)                            // custom start
 assert.equal(nextChallanNo([{ challanNo: 4 }, { challanNo: 7 }, {}], 1), 8) // max+1, blank ignored
 assert.equal(nextChallanNo([{ challanNo: 2 }], 1000), 1000)            // start wins when higher
+
+// ---- Stage 1: status + passed-only hisab ----
+assert.equal(countsInHisab({ status: 'passed' }), true)
+assert.equal(countsInHisab({}), true)                       // legacy row, no status → counts
+assert.equal(countsInHisab({ status: 'pending' }), false)
+assert.equal(countsInHisab({ status: 'voided' }), false)
+assert.equal(countsInHisab({ status: 'cancelled' }), false)
+assert.equal(countsInHisab({ status: 'passed', deleted: true }), false)
+const passEntries = [
+  { transporterId: 't1', date: '2026-07-01', status: 'passed',    freight: 1000 },
+  { transporterId: 't1', date: '2026-07-01', status: 'pending',   freight: 5000 },
+  { transporterId: 't1', date: '2026-07-01', status: 'cancelled', freight: 9000 },
+]
+assert.equal(transporterTotals(passEntries, [], 't1', {}).freight, 1000) // only the passed one
 
 console.log('ALL FREIGHT CALC TESTS PASSED')
