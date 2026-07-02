@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
-import { countsInHisab, applyTransition, isStale, findDuplicate } from './src/modules/freight/logic/status.js'
+import { countsInHisab, applyTransition, isStale, findDuplicate, makeReversal } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
@@ -108,5 +108,11 @@ assert.ok(findDuplicate(dupExisting, cand))                                  // 
 assert.equal(findDuplicate(dupExisting, { ...cand, freight: 2600 }), null)  // different total
 assert.equal(findDuplicate(dupExisting, { ...cand, gaadiNumber: '9999' }), null)
 assert.equal(findDuplicate([{ ...dupExisting[0], status: 'voided' }], cand), null) // voided ignored
+
+// ---- Stage 1: reversing-entry payment reversal ----
+const pay = { id: 'p1', transporterId: 't1', date: '2026-07-01', amount: 500, paymentNo: 3 }
+const rev = makeReversal(pay, 'Nishant')
+assert.equal(rev.amount, -500); assert.equal(rev.reversesPaymentNo, 3); assert.equal(rev.transporterId, 't1')
+assert.equal(transporterTotals([], [pay, rev], 't1', {}).advances, 0) // nets to zero
 
 console.log('ALL FREIGHT CALC TESTS PASSED')

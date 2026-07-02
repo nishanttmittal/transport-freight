@@ -42,6 +42,21 @@ export function findDuplicate(entries, cand) {
   ) || null
 }
 
+/** A reversing payment (negative) that undoes `p` without editing the original. */
+export function makeReversal(p, by) {
+  return {
+    transporterId: p.transporterId,
+    date: new Date().toISOString().slice(0, 10),
+    amount: -(Number(p.amount) || 0),
+    paidBy: p.paidBy || '',
+    note: `Reversal of PAY-${String(p.paymentNo || 0).padStart(4, '0')}`,
+    reversesPaymentNo: Number(p.paymentNo) || 0,
+    reversal: true,
+    createdByUser: by || '',
+    deleted: false,
+  }
+}
+
 const nowIso = () => new Date().toISOString()
 const need = (v, msg) => { if (!v || !String(v).trim()) throw new Error(msg) }
 

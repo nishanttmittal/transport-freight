@@ -72,6 +72,11 @@ export const advanceSchema = [
   field({ name: 'paidBy',        label: 'Paid By',     type: 'text',   default: 'Nishant' }), // Nishant | Anshul
   field({ name: 'note',          label: 'Note',        type: 'text',   default: '' }),
   field({ name: 'reversed',      label: 'Reversed',    type: 'toggle', default: false }),
+  field({ name: 'paymentNo',        label: 'Payment No',     type: 'number', default: 0 }),
+  field({ name: 'reversesPaymentNo', label: 'Reverses',      type: 'number', default: 0, inList: false }),
+  field({ name: 'reversal',         label: 'Is Reversal',    type: 'toggle', default: false, inList: false }),
+  field({ name: 'factoryId',        label: 'Factory ID',     default: 'main', inList: false }),
+  field({ name: 'transporterName',  label: 'Gaadiwala Name', default: '', inList: false }),
   field({ name: 'deleted',       label: 'Deleted',     type: 'toggle', default: false, inList: false }),
   field({ name: 'createdByUser', label: 'Created By',  default: '', inList: false }),
 ]
