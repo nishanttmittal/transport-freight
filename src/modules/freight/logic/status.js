@@ -3,6 +3,8 @@
  * Legacy rows (no `status`) are treated as 'passed' so the existing hisab is
  * unchanged when this ships.
  */
+import { entryTotal } from './calc.js'
+
 export const STATUS = {
   pending: 'pending',
   needs_correction: 'needs_correction',
@@ -21,6 +23,23 @@ export function countsInHisab(e) {
 /** Optimistic-concurrency check: true if the stored revision moved on. */
 export function isStale(expected, actual) {
   return (Number(expected) || 0) !== (Number(actual) || 0)
+}
+
+/**
+ * Find a likely duplicate of `cand` among `entries`: same gaadiwala + gaadi no +
+ * date + total (and same first destination when the candidate has one). Ignores
+ * voided/cancelled/deleted rows. Returns the matching entry or null (warn only).
+ */
+export function findDuplicate(entries, cand) {
+  const tot = entryTotal(cand)
+  return (entries || []).find(e =>
+    !e.deleted && e.status !== STATUS.voided && e.status !== STATUS.cancelled &&
+    e.transporterId === cand.transporterId &&
+    (e.gaadiNumber || '') === (cand.gaadiNumber || '') &&
+    e.date === cand.date &&
+    entryTotal(e) === tot &&
+    (!cand.destinationId || e.destinationId === cand.destinationId)
+  ) || null
 }
 
 const nowIso = () => new Date().toISOString()

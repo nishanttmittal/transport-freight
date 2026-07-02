@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
-import { countsInHisab, applyTransition, isStale } from './src/modules/freight/logic/status.js'
+import { countsInHisab, applyTransition, isStale, findDuplicate } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
@@ -100,5 +100,13 @@ assert.equal(nextFromCounters({ payment: 9 }, 'challan', 1), 1)   // kinds indep
 assert.equal(isStale(3, 3), false) // same revision → fresh
 assert.equal(isStale(2, 3), true)  // someone bumped it → stale
 assert.equal(isStale(0, 0), false)
+
+// ---- Stage 1: duplicate detection ----
+const dupExisting = [{ id: 'a', transporterId: 't1', gaadiNumber: '1234', date: '2026-07-01', destinationId: 'd1', status: 'passed', freight: 2500 }]
+const cand = { transporterId: 't1', gaadiNumber: '1234', date: '2026-07-01', destinationId: 'd1', freight: 2500 }
+assert.ok(findDuplicate(dupExisting, cand))                                  // exact dup
+assert.equal(findDuplicate(dupExisting, { ...cand, freight: 2600 }), null)  // different total
+assert.equal(findDuplicate(dupExisting, { ...cand, gaadiNumber: '9999' }), null)
+assert.equal(findDuplicate([{ ...dupExisting[0], status: 'voided' }], cand), null) // voided ignored
 
 console.log('ALL FREIGHT CALC TESTS PASSED')
