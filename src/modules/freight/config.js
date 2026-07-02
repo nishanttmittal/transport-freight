@@ -28,6 +28,9 @@ export const CHALLAN_PAD = 4
 export const CHALLAN_START = 1
 export const fmtChallan = (no) => (Number(no) > 0 ? `${CHALLAN_PREFIX}${String(no).padStart(CHALLAN_PAD, '0')}` : '—')
 
+export const PAYMENT_PREFIX = 'PAY-'
+export const fmtPayment = (no) => (Number(no) > 0 ? `${PAYMENT_PREFIX}${String(no).padStart(CHALLAN_PAD, '0')}` : '')
+
 /** Hisab alert levels (₹). Banner escalates as a transporter's balance crosses each. */
 export const THRESHOLD_LEVELS = [5000, 10000, 15000, 20000]
 

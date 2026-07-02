@@ -12,6 +12,8 @@ import { todayStr, fmtNum, fmtDate } from '../../../core/utils/format'
 import { makeId } from '../../../core/db/repository'
 import { useFreight } from '../FreightContext'
 import { entryTotal, lockedOn, nextChallanNo } from '../logic/calc'
+import { findDuplicate } from '../logic/status'
+import { auditLine } from '../logic/audit'
 import { applyBalance } from '../logic/balance'
 import { EXTRA_POINT_HINT, QUICK_BAGS, CHALLAN_START, fmtChallan } from '../config'
 
@@ -20,8 +22,9 @@ const active = (list) => (list || []).filter(x => !x.deleted && x.active !== fal
 const emptyDrop = () => ({ destinationId: '', bags: '', pvtMarka: '', freight: '', lrCharge: '', unloading: '', misc: '', extraPoint: '', remarks: '' })
 
 export default function Entry({ by = '', level = '' }) {
-  const { transporters, destinations, entries, settlements, lastUsed, log } = useFreight()
+  const { transporters, destinations, entries, settlements, lastUsed, logs, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
+  const [busy, setBusy] = useState(false)
 
   const remembered = lastUsed.get() || {}
   const [veh, setVeh] = useState({ date: todayStr(), transporterId: '', gaadiNumber: remembered.gaadiNumber || '' })
@@ -62,20 +65,30 @@ export default function Entry({ by = '', level = '' }) {
   const addDrop = () => setDrops(ds => [...ds, emptyDrop()])
   const removeDrop = (i) => setDrops(ds => ds.filter((_, idx) => idx !== i))
 
-  const save = () => {
+  const save = async () => {
     if (!veh.transporterId) return show('Pick a gaadiwala', 2000)
     for (let i = 0; i < drops.length; i++) {
       if (!drops[i].destinationId) return show(`Pick transport for drop ${i + 1}`, 2200)
     }
     if (lockedOn(settlements.list, veh.transporterId, veh.date)) return show('This period is settled & locked', 2600)
 
+    const dup = findDuplicate(entries.list, { transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), date: veh.date, ...drops[0], destinationId: drops[0].destinationId })
+    if (dup && !window.confirm(`Possible duplicate of ${fmtChallan(dup.challanNo)} (same gaadi, date, amount). Save anyway?`)) return
+    if (busy) return
+    setBusy(true)
+    try {
     const bId = makeId('batch')
-    const challan = nextChallanNo(entries.list, CHALLAN_START)
+    const challan = await allocateNumber('challan')
+    const gName = tList.find(t => t.id === veh.transporterId)?.name || ''
     let grand = 0
     drops.forEach((d) => {
       const rec = {
         date: veh.date,
         challanNo: challan,
+        status: 'passed',
+        revision: 0,
+        submittedBy: by || '',
+        transporterName: gName,
         transporterId: veh.transporterId,
         gaadiNumber: veh.gaadiNumber.trim(),
         destinationId: d.destinationId,
@@ -100,14 +113,15 @@ export default function Entry({ by = '', level = '' }) {
     })
     const crossed = applyBalance(transporters, veh.transporterId, +grand)
     const n = drops.length
-    log('entry.add', `${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
+    log('entry.add', `${fmtChallan(challan)} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
+    logs.insert(auditLine('entry.add', { by, role: level, after: { challanNo: challan, total: grand, drops: n }, device: navigator.userAgent }))
     lastUsed.set({ ...(lastUsed.get() || {}), gaadiNumber: veh.gaadiNumber })
 
     // reset for the next vehicle (keep the date — usually same day)
     setVeh({ date: veh.date, transporterId: '', gaadiNumber: '' })
     setDrops([emptyDrop()])
-    const tName = tList.find(t => t.id === veh.transporterId)?.name || ''
-    show(crossed ? `Saved ${fmtChallan(challan)} · ${tName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
+    show(crossed ? `Saved ${fmtChallan(challan)} · ${gName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
+    } finally { setBusy(false) }
   }
 
   return (
@@ -203,7 +217,7 @@ export default function Entry({ by = '', level = '' }) {
             <div className="text-xs text-slate-500">Total · {drops.length} drop{drops.length > 1 ? 's' : ''}</div>
             <div className="text-2xl font-bold text-slate-800 font-mono">₹{fmtNum(grandTotal)}</div>
           </div>
-          <Button size="lg" variant="success" onClick={save} className="px-8">Save</Button>
+          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-8">{busy ? 'Saving…' : 'Save'}</Button>
         </div>
       </div>
     </div>
