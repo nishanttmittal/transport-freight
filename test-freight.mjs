@@ -6,6 +6,7 @@ import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
 import { countsInHisab, applyTransition, isStale, findDuplicate, makeReversal } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
+import { auditLine } from './src/modules/freight/logic/audit.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
 
@@ -114,5 +115,10 @@ const pay = { id: 'p1', transporterId: 't1', date: '2026-07-01', amount: 500, pa
 const rev = makeReversal(pay, 'Nishant')
 assert.equal(rev.amount, -500); assert.equal(rev.reversesPaymentNo, 3); assert.equal(rev.transporterId, 't1')
 assert.equal(transporterTotals([], [pay, rev], 't1', {}).advances, 0) // nets to zero
+
+// ---- Stage 1: audit line ----
+const al = auditLine('entry.pass', { by: 'Anshul', role: 'manager', reason: '', before: { freight: 100 }, after: { freight: 100, status: 'passed' }, device: 'test-ua' })
+assert.equal(al.action, 'entry.pass'); assert.equal(al.by, 'Anshul'); assert.equal(al.device, 'test-ua')
+assert.deepEqual(al.after, { freight: 100, status: 'passed' }); assert.ok(al.ts)
 
 console.log('ALL FREIGHT CALC TESTS PASSED')
