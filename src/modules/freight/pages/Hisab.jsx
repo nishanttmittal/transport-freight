@@ -10,13 +10,13 @@ import { fmtNum, fmtDate, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { ledgerLines, transporterTotals, unsettledFrom, thresholdLevel } from '../logic/calc'
 import { levelStyle } from '../logic/balance'
-import { shareStatementPdf } from '../logic/pdf'
+import { shareStatementPdf, statementHash } from '../logic/pdf'
 import { THRESHOLD_LEVELS, fmtChallan } from '../config'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
 export default function Hisab({ owner = false, by = '' }) {
-  const { transporters, destinations, entries, advances, settlements, log } = useFreight()
+  const { transporters, destinations, entries, advances, settlements, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
   const [tid, setTid] = useState('')
 
@@ -37,10 +37,14 @@ export default function Hisab({ owner = false, by = '' }) {
     shareStatementPdf({ transporterName: transporter.name, lines, destName, totals, period: { from, to: todayStr() } })
   }
 
-  const doSettle = () => {
+  const doSettle = async () => {
     if (!transporter) return
     if (!lines.length) return show('Nothing to settle', 2000)
     if (!window.confirm(`Settle ${transporter.name}'s hisab up to today?\n\nBalance ₹${fmtNum(totals.balance)} will be locked. New entries start a fresh period.`)) return
+    const settlementNo = await allocateNumber('settlement')
+    const period = { from, to: todayStr() }
+    const pdfHash = await statementHash({ transporterName: transporter.name, lines, destName, totals, period })
+    const tripCount = lines.filter(l => l.kind === 'freight').length
     settlements.insert({
       transporterId: tid,
       periodFrom: from,
@@ -50,9 +54,18 @@ export default function Hisab({ owner = false, by = '' }) {
       balance: totals.balance,
       finalizedBy: by || (owner ? 'Owner' : 'Staff'),
       locked: true,
+      settlementNo,
+      settledAt: new Date().toISOString(),
+      settledBy: by || (owner ? 'Owner' : 'Staff'),
+      transporterName: transporter.name,
+      tripCount,
+      totalPayments: totals.advances,
+      closingBalance: totals.balance,
+      pdfHash,
+      factoryId: 'main',
     })
     transporters.update(tid, { runningBalance: 0, alertedLevel: 0 })
-    log('hisab.settle', `${transporter.name} ₹${fmtNum(totals.balance)}`, by, tid)
+    log('hisab.settle', `SET-${String(settlementNo).padStart(4, '0')} ${transporter.name} ₹${fmtNum(totals.balance)}`, by, tid)
     show('Settled & locked ✓')
     doShare()
   }

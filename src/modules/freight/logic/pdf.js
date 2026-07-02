@@ -61,6 +61,17 @@ export function buildStatementPdf({ transporterName, lines, destName, totals, pe
   return { doc, filename }
 }
 
+/** SHA-256 hex of the generated statement — stored on the settlement so the paid
+ *  figure is provable later. Returns '' if Web Crypto is unavailable. */
+export async function statementHash(args) {
+  try {
+    const { doc } = buildStatementPdf(args)
+    const buf = doc.output('arraybuffer')
+    const digest = await crypto.subtle.digest('SHA-256', buf)
+    return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')
+  } catch { return '' }
+}
+
 /** Download (and try to native-share) a built statement PDF. */
 export async function shareStatementPdf(args) {
   const { doc, filename } = buildStatementPdf(args)

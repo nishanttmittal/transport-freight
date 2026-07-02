@@ -90,6 +90,16 @@ export const settlementSchema = [
   field({ name: 'balance',       label: 'Balance',     type: 'number', default: 0 }),
   field({ name: 'finalizedBy',   label: 'By',          type: 'text',   default: '' }),
   field({ name: 'locked',        label: 'Locked',      type: 'toggle', default: true }),
+  // snapshot (frozen at settlement — proves what was paid, survives master edits)
+  field({ name: 'settlementNo',   label: 'Settlement No', type: 'number', default: 0 }),
+  field({ name: 'settledAt',      label: 'Settled At',    default: '', inList: false }),
+  field({ name: 'settledBy',      label: 'Settled By',    default: '', inList: false }),
+  field({ name: 'transporterName', label: 'Gaadiwala Name', default: '', inList: false }),
+  field({ name: 'tripCount',      label: 'Trips',         type: 'number', default: 0, inList: false }),
+  field({ name: 'totalPayments',  label: 'Payments',      type: 'number', default: 0, inList: false }),
+  field({ name: 'closingBalance', label: 'Closing',       type: 'number', default: 0, inList: false }),
+  field({ name: 'pdfHash',        label: 'PDF Hash',      default: '', inList: false }),
+  field({ name: 'factoryId',      label: 'Factory ID',    default: 'main', inList: false }),
 ]
 
 /** App user for role-based access (Google sign-in). Doc id = lowercased email. */
