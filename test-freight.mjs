@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert'
 import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
-import { countsInHisab, applyTransition } from './src/modules/freight/logic/status.js'
+import { countsInHisab, applyTransition, isStale } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
@@ -95,5 +95,10 @@ assert.equal(nextFromCounters({}, 'challan', 1), 1)               // fresh → s
 assert.equal(nextFromCounters({ challan: 5 }, 'challan', 1), 6)   // last+1
 assert.equal(nextFromCounters({ challan: 2 }, 'challan', 1000), 1000) // start wins when higher
 assert.equal(nextFromCounters({ payment: 9 }, 'challan', 1), 1)   // kinds independent
+
+// ---- Stage 1: optimistic-concurrency guard ----
+assert.equal(isStale(3, 3), false) // same revision → fresh
+assert.equal(isStale(2, 3), true)  // someone bumped it → stale
+assert.equal(isStale(0, 0), false)
 
 console.log('ALL FREIGHT CALC TESTS PASSED')
