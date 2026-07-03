@@ -7,7 +7,7 @@
  * every transport office's amount stays clean and is never double-counted.
  */
 import { useState } from 'react'
-import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Select, NumberStepper, useToast, Toast } from '../../../core/ui'
+import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Select, useToast, Toast } from '../../../core/ui'
 import { todayStr, fmtNum, fmtDate } from '../../../core/utils/format'
 import { makeId } from '../../../core/db/repository'
 import { useFreight } from '../FreightContext'
@@ -15,7 +15,7 @@ import { entryTotal, lockedOn, nextChallanNo } from '../logic/calc'
 import { findDuplicate } from '../logic/status'
 import { auditLine } from '../logic/audit'
 import { applyBalance } from '../logic/balance'
-import { EXTRA_POINT_HINT, QUICK_BAGS, CHALLAN_START, fmtChallan } from '../config'
+import { EXTRA_POINT_HINT, CHALLAN_START, fmtChallan } from '../config'
 
 const ADD = '__add__'
 const active = (list) => (list || []).filter(x => !x.deleted && x.active !== false)
@@ -214,7 +214,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div><FieldLabel>Bags</FieldLabel><div className="mt-1.5"><NumberStepper value={d.bags} onChange={setDropField(i, 'bags')} quickAdds={QUICK_BAGS} /></div></div>
+            <div><FieldLabel>Bags</FieldLabel><div className="mt-1.5"><NumberInput value={d.bags} placeholder="0" onChange={e => setDropField(i, 'bags')(e.target.value)} /></div></div>
             <div><FieldLabel>Pvt Marka</FieldLabel><div className="mt-1.5"><TextInput value={d.pvtMarka} placeholder="marka" onChange={e => setDropField(i, 'pvtMarka')(e.target.value)} /></div></div>
           </div>
 
