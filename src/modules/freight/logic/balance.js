@@ -5,7 +5,7 @@
  * are read only when one transporter is opened. Admin "Recalculate" can rebuild
  * a balance from scratch as a safety net.
  */
-import { transporterTotals, unsettledFrom, thresholdLevel, crossingAlert } from './calc.js'
+import { transporterTotals, unsettledFrom, openingBalance, thresholdLevel, crossingAlert } from './calc.js'
 import { THRESHOLD_LEVELS } from '../config.js'
 
 const num = (v) => Number(v) || 0
@@ -33,10 +33,13 @@ export function applyBalance(transporters, transporterId, delta) {
   return crossed
 }
 
-/** Recompute a transporter's UNSETTLED balance from raw data (safety net). */
+/** Recompute a transporter's UNSETTLED balance from raw data (safety net).
+ *  Includes any brought-forward balance from the last settlement so a
+ *  Recalculate never wipes a carried-forward remainder. */
 export function recomputeBalance({ entries, advances, settlements }, transporterId) {
   const from = unsettledFrom(settlements, transporterId)
-  const { balance } = transporterTotals(entries, advances, transporterId, { from })
+  const opening = openingBalance(settlements, transporterId)
+  const { balance } = transporterTotals(entries, advances, transporterId, { from, opening })
   return balance
 }
 

@@ -35,6 +35,8 @@ export function buildStatementPdf({ transporterName, lines, destName, totals, pe
 
   const body = (lines || []).map(l => l.kind === 'advance'
     ? ['', fmtDate(l.date), 'Advance', l.paidBy ? `Paid by ${l.paidBy}` : (l.note || ''), '', `-${fmtNum(l.amount)}`, fmtNum(l.balance)]
+    : l.kind === 'opening'
+    ? ['', fmtDate(l.date), 'Brought fwd', 'Balance carried from last hisab', fmtNum(l.debit), '', fmtNum(l.balance)]
     : [fmtChallan(l.challanNo), fmtDate(l.date), 'Freight', `${destName ? destName(l.destinationId) : ''}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`, fmtNum(l.debit), '', fmtNum(l.balance)])
 
   autoTable(doc, {
@@ -49,6 +51,7 @@ export function buildStatementPdf({ transporterName, lines, destName, totals, pe
   let y = (doc.lastAutoTable?.finalY || 96) + 24
   doc.setFontSize(11); doc.setTextColor(...STEEL); doc.setFont(undefined, 'normal')
   const line = (label, val) => { doc.text(label, 360, y, { align: 'right' }); doc.text(`₹ ${fmtNum(val)}`, 555, y, { align: 'right' }); y += 18 }
+  if (totals.opening) line('Brought forward', totals.opening)
   line('Total Freight', totals.freight)
   line('Less Advances', totals.advances)
   doc.setFont(undefined, 'bold'); doc.setFontSize(13)

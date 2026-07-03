@@ -97,7 +97,8 @@ export const settlementSchema = [
   field({ name: 'transporterName', label: 'Gaadiwala Name', default: '', inList: false }),
   field({ name: 'tripCount',      label: 'Trips',         type: 'number', default: 0, inList: false }),
   field({ name: 'totalPayments',  label: 'Payments',      type: 'number', default: 0, inList: false }),
-  field({ name: 'closingBalance', label: 'Closing',       type: 'number', default: 0, inList: false }),
+  field({ name: 'openingBalance', label: 'Brought fwd',   type: 'number', default: 0, inList: false }), // carried into THIS period
+  field({ name: 'closingBalance', label: 'Closing',       type: 'number', default: 0, inList: false }), // carried into the NEXT period
   field({ name: 'settlementHash', label: 'Settlement Hash', default: '', inList: false }), // canonical (reproducible)
   field({ name: 'pdfHash',        label: 'PDF Hash',      default: '', inList: false }),   // deprecated (not reproducible)
   field({ name: 'factoryId',      label: 'Factory ID',    default: 'main', inList: false }),

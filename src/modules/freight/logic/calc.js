@@ -20,13 +20,28 @@ export function nextChallanNo(entries, start = 1) {
   return Math.max(max + 1, start)
 }
 
-/** Cutoff date of the latest locked settlement for a transporter ('' if none). */
-export function unsettledFrom(settlements, transporterId) {
+/** The latest locked settlement for a transporter (null if none). */
+export function latestSettlement(settlements, transporterId) {
   const locked = (settlements || [])
     .filter(s => s.transporterId === transporterId && s.locked !== false && s.periodTo)
-    .map(s => s.periodTo)
-    .sort()
-  return locked.length ? locked[locked.length - 1] : ''
+    .sort((a, b) => (a.periodTo || '').localeCompare(b.periodTo || ''))
+  return locked.length ? locked[locked.length - 1] : null
+}
+
+/** Cutoff date of the latest locked settlement for a transporter ('' if none). */
+export function unsettledFrom(settlements, transporterId) {
+  const s = latestSettlement(settlements, transporterId)
+  return s ? s.periodTo : ''
+}
+
+/**
+ * Opening balance carried into the CURRENT period = the closing balance left
+ * unpaid at the last settlement. 0 if never settled. This is what makes an
+ * unpaid remainder roll forward instead of vanishing when a hisab is settled.
+ */
+export function openingBalance(settlements, transporterId) {
+  const s = latestSettlement(settlements, transporterId)
+  return s ? num(s.closingBalance) : 0
 }
 
 /**
@@ -37,6 +52,7 @@ export function unsettledFrom(settlements, transporterId) {
 export function transporterTotals(entries, advances, transporterId, opts = {}) {
   const from = opts.from
   const to = opts.upToDate
+  const opening = num(opts.opening) // carried-forward unpaid balance (0 if none)
   const inRange = (d) => (!from || (d || '') > from) && (!to || (d || '') <= to)
   let freight = 0, adv = 0
   for (const e of (entries || [])) {
@@ -49,7 +65,7 @@ export function transporterTotals(entries, advances, transporterId, opts = {}) {
     if (!inRange(a.date)) continue
     adv += num(a.amount)
   }
-  return { freight, advances: adv, balance: freight - adv }
+  return { freight, advances: adv, opening, balance: opening + freight - adv }
 }
 
 /** Highest threshold level the balance has crossed (0 if below the first). */
@@ -80,6 +96,7 @@ export function lockedOn(settlements, transporterId, date) {
 export function ledgerLines(entries, advances, transporterId, opts = {}) {
   const from = opts.from
   const to = opts.upToDate
+  const opening = num(opts.opening) // brought-forward balance from the last settlement
   const inRange = (d) => (!from || (d || '') > from) && (!to || (d || '') <= to)
   const rows = []
   for (const e of (entries || [])) {
@@ -91,7 +108,9 @@ export function ledgerLines(entries, advances, transporterId, opts = {}) {
     rows.push({ id: a.id, date: a.date, kind: 'advance', paidBy: a.paidBy, note: a.note, amount: num(a.amount), debit: 0, credit: num(a.amount), _s: a.createdAt || '' })
   }
   rows.sort((x, y) => (x.date || '').localeCompare(y.date || '') || (x._s || '').localeCompare(y._s || ''))
+  // A non-zero carried balance shows as the oldest line and seeds the running total.
+  const out = opening ? [{ id: '__opening__', date: from || '', kind: 'opening', amount: opening, debit: opening, credit: 0, _s: '' }] : []
   let bal = 0
-  for (const r of rows) { bal += r.debit - r.credit; r.balance = bal }
-  return rows
+  for (const r of [...out, ...rows]) { bal += r.debit - r.credit; r.balance = bal }
+  return [...out, ...rows]
 }

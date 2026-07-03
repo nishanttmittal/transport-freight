@@ -3,7 +3,7 @@
  * Run: node test-freight.mjs
  */
 import assert from 'node:assert'
-import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
+import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, openingBalance, latestSettlement, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
 import { countsInHisab, applyTransition, isStale, findDuplicate, makeReversal } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 import { auditLine } from './src/modules/freight/logic/audit.js'
@@ -148,5 +148,29 @@ assert.equal(h.calls.inc.delta, -1500)
 const noInc = { list: [{ id: 't1', runningBalance: 1000 }], update: (id, patch) => { noInc.p = patch } }
 applyBalance(noInc, 't1', 500)
 assert.equal(noInc.p.runningBalance, 1500, 'fallback writes prev+delta')
+
+// ---- Carry-forward: unpaid remainder rolls into the next period ----
+{
+  // Settle #1 left ₹1,000 unpaid (closingBalance), period ended 2026-07-04.
+  const setts = [{ transporterId: 't9', locked: true, periodTo: '2026-07-04', closingBalance: 1000 }]
+  assert.equal(openingBalance(setts, 't9'), 1000, 'opening = last closing balance')
+  assert.equal(openingBalance(setts, 'tX'), 0, 'no settlement → opening 0')
+  assert.equal(unsettledFrom(setts, 't9'), '2026-07-04')
+  assert.equal(latestSettlement(setts, 't9').closingBalance, 1000)
+  // Next period: one new ₹2,000 freight, no payment → balance = 1000 carried + 2000
+  const ent = [{ id: 'x1', transporterId: 't9', date: '2026-07-06', freight: 2000, status: 'passed' }]
+  const from = unsettledFrom(setts, 't9'), opening = openingBalance(setts, 't9')
+  const t = transporterTotals(ent, [], 't9', { from, opening })
+  assert.equal(t.opening, 1000); assert.equal(t.freight, 2000); assert.equal(t.balance, 3000, 'carried + new freight')
+  // ledger shows a brought-forward line first, running balance seeded at opening
+  const L = ledgerLines(ent, [], 't9', { from, opening })
+  assert.equal(L[0].kind, 'opening'); assert.equal(L[0].balance, 1000, 'opening line seeds running balance')
+  assert.equal(L[L.length - 1].balance, 3000, 'running balance ends at carried + freight')
+  // latest settlement picks the newest periodTo
+  const two = [{ transporterId: 't9', locked: true, periodTo: '2026-06-01', closingBalance: 50 }, { transporterId: 't9', locked: true, periodTo: '2026-07-04', closingBalance: 1000 }]
+  assert.equal(openingBalance(two, 't9'), 1000, 'uses the most recent settlement')
+  // fully-paid settle (closing 0) carries nothing
+  assert.equal(openingBalance([{ transporterId: 't9', locked: true, periodTo: '2026-07-04', closingBalance: 0 }], 't9'), 0)
+}
 
 console.log('ALL FREIGHT CALC TESTS PASSED')
