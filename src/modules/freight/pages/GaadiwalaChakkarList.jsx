@@ -32,7 +32,6 @@ export default function GaadiwalaChakkarList({ transporterId }) {
   const mine = (entries.list || []).filter(e => e.transporterId === transporterId && !e.deleted && (e.status || STATUS.passed) !== STATUS.voided && inWindow(e.date))
   const batches = groupBatches(mine)
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (Number(b.challanNo) || 0) - (Number(a.challanNo) || 0))
-    .slice(0, 50)
 
   return (
     <div className="max-w-lg mx-auto px-4 pb-40 space-y-2">
