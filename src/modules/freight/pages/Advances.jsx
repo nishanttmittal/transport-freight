@@ -42,7 +42,7 @@ export default function Advances({ owner = false, by = '', level = '' }) {
       audit({ action: 'payment.add', by, role: level, after: rec })
       setForm(f => ({ ...f, amount: '', note: '' }))
       show(`Saved ${fmtPayment(paymentNo)} ✓`)
-    } finally { setBusy(false) }
+    } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 
   // Reversal = a NEW reversing payment (negative). The original is never edited.

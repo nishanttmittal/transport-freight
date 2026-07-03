@@ -34,8 +34,10 @@ function MasterList({ title, repo, withPhone, withLogin, owner, users }) {
     if (!email) return
     if (!email.includes('@') || !email.includes('.')) return show('That doesn’t look like an email', 2200)
     const existing = (users.list || []).find(u => (u.email || '').toLowerCase() === email)
-    if (existing) users.update(existing.id, { role: 'gaadiwala', transporterId: r.id, name: r.name, active: true, deleted: false })
-    else users.insert({ email, name: r.name, role: 'gaadiwala', transporterId: r.id, active: true, deleted: false })
+    // Always write the user doc keyed by email — the rules resolve role via
+    // users/{email}. (Self-heals any legacy random-id doc by retiring it.)
+    users.insert({ id: email, email, name: r.name, role: 'gaadiwala', transporterId: r.id, active: true, deleted: false })
+    if (existing && existing.id !== email) users.update(existing.id, { active: false, deleted: true })
     show('Login added ✓ — he can now sign in with that Gmail', 2600)
   }
   const removeLogin = (login) => { if (window.confirm(`Remove ${login.email}'s login? He won’t be able to sign in.`)) users.update(login.id, { active: false }) }

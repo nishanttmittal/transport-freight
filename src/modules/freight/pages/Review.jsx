@@ -49,15 +49,16 @@ export default function Review({ owner = false, by = '', level = '' }) {
   const passed = groupBatches(live.filter(e => (e.status || STATUS.passed) === STATUS.passed))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 20)
 
-  // Apply an action to every row of a batch (guarded), returning ok/false.
+  // Apply an action to a WHOLE batch in ONE atomic transaction (P1.3) — every
+  // row moves together or none does. Revision-guarded, so returns false if any
+  // row was changed by someone else in the meantime.
   const applyBatch = async (batch, action, ctx) => {
-    for (const row of batch.rows) {
+    const updates = batch.rows.map(row => {
       const t = applyTransition(row, action, ctx)
-      const patch = { status: t.status, challanNo: t.challanNo, approvedBy: t.approvedBy || '', approvedAt: t.approvedAt || '', voidReason: t.voidReason || '', correctionReason: t.correctionReason || '', cancelReason: t.cancelReason || '' }
-      const res = await entries.updateGuarded(row.id, row.revision, patch)
-      if (!res.ok) return false
-    }
-    return true
+      return { id: row.id, expectedRevision: row.revision, patch: { status: t.status, challanNo: t.challanNo, approvedBy: t.approvedBy || '', approvedAt: t.approvedAt || '', voidReason: t.voidReason || '', correctionReason: t.correctionReason || '', cancelReason: t.cancelReason || '' } }
+    })
+    const res = await entries.commitBatch({ updates })
+    return res.ok
   }
 
   const doPass = async (batch) => {
@@ -71,7 +72,7 @@ export default function Review({ owner = false, by = '', level = '' }) {
       log('entry.pass', `${fmtChallan(challan)} ${tName(batch.transporterId, batch.transporterName)} ₹${batch.total}`, by, batch.batchId)
       audit({ action: 'entry.pass', by, role: level, after: { challanNo: challan, total: batch.total } })
       show(`Passed ${fmtChallan(challan)} ✓`)
-    } finally { setBusy(false) }
+    } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 
   const doReasoned = async (batch, action, promptMsg, verb) => {
@@ -86,7 +87,7 @@ export default function Review({ owner = false, by = '', level = '' }) {
       log(`entry.${action}`, `${tName(batch.transporterId, batch.transporterName)} ₹${batch.total} — ${reason.trim()}`, by, batch.batchId)
       audit({ action: `entry.${action}`, by, role: level, reason: reason.trim(), before: { challanNo: batch.challanNo, total: batch.total } })
       show(`${verb} ✓`)
-    } finally { setBusy(false) }
+    } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 
   const Row = ({ b, children }) => (

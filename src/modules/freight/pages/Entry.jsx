@@ -93,20 +93,24 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         const oldTotal = editBatch.reduce((s, r) => s + entryTotal(r), 0)
         const newStatus = ownerEdit ? 'passed' : 'pending'
         const batchChallan = editBatch[0].challanNo || 0
+        // Build the whole edit (changed drops + removed drops + added drops) and
+        // commit it in ONE atomic transaction (P1.3) — never half-apply an edit.
+        const updates = [], inserts = [], softDeletes = []
         const n = Math.max(drops.length, editBatch.length)
         for (let i = 0; i < n; i++) {
           const d = drops[i]; const row = editBatch[i]
           if (row && d) {
             const patch = { date: veh.date, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), status: newStatus }
             if (!ownerEdit) patch.correctionReason = ''
-            const res = await entries.updateGuarded(row.id, row.revision, patch)
-            if (!res.ok) { show('Refresh — changed by someone else', 2600); return }
+            updates.push({ id: row.id, expectedRevision: row.revision, patch })
           } else if (row && !d) {
-            entries.update(row.id, { deleted: true })
+            softDeletes.push(row.id)
           } else if (!row && d) {
-            entries.insert({ date: veh.date, status: newStatus, revision: 0, challanNo: ownerEdit ? batchChallan : 0, submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), batchId: editBatch[0].batchId, createdByUser: by || '', sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false })
+            inserts.push({ id: makeId('r'), date: veh.date, status: newStatus, revision: 0, challanNo: ownerEdit ? batchChallan : 0, submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), batchId: editBatch[0].batchId, createdByUser: by || '', sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false })
           }
         }
+        const res = await entries.commitBatch({ updates, inserts, softDeletes })
+        if (!res.ok) { show('Refresh — changed by someone else', 2600); return }
         if (ownerEdit) {
           const newTotal = drops.reduce((s, dd) => s + entryTotal(dd), 0)
           const delta = newTotal - oldTotal
@@ -120,7 +124,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
           show('Resubmitted for approval ✓', 2400)
         }
         onDone && onDone()
-      } finally { setBusy(false) }
+      } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
       return
     }
 
@@ -159,7 +163,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         setDrops([emptyDrop()])
         show(crossed ? `Saved ${fmtChallan(challan)} · ${gName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
       }
-    } finally { setBusy(false) }
+    } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 
   return (

@@ -5,8 +5,8 @@
  * are read only when one transporter is opened. Admin "Recalculate" can rebuild
  * a balance from scratch as a safety net.
  */
-import { transporterTotals, unsettledFrom, thresholdLevel, crossingAlert } from './calc'
-import { THRESHOLD_LEVELS } from '../config'
+import { transporterTotals, unsettledFrom, thresholdLevel, crossingAlert } from './calc.js'
+import { THRESHOLD_LEVELS } from '../config.js'
 
 const num = (v) => Number(v) || 0
 
@@ -24,7 +24,12 @@ export function applyBalance(transporters, transporterId, delta) {
   const next = prev + num(delta)
   const crossed = crossingAlert(prev, next, THRESHOLD_LEVELS)
   const level = thresholdLevel(next, THRESHOLD_LEVELS)
-  transporters.update(transporterId, { runningBalance: next, alertedLevel: level })
+  // Write an ATOMIC delta (P1.2): the server computes prev+delta, so two staff
+  // saving at the same instant can never overwrite each other's balance.
+  // `level`/`crossed` are best-effort hints from the local view (cosmetic);
+  // Admin "Recalculate" rebuilds the exact balance if the alert hint ever drifts.
+  if (typeof transporters.incBalance === 'function') transporters.incBalance(transporterId, num(delta), level)
+  else transporters.update(transporterId, { runningBalance: next, alertedLevel: level })
   return crossed
 }
 

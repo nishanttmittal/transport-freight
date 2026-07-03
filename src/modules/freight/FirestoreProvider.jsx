@@ -4,7 +4,7 @@
  * destinations are added in the app).
  */
 import { useEffect, useState, useCallback } from 'react'
-import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch, runTransaction, query, where } from 'firebase/firestore'
+import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch, runTransaction, query, where, increment } from 'firebase/firestore'
 import { db, paths, ensureSignedIn, watchAuth } from '../../core/db/firebase'
 import { makeNormalizer } from '../../core/schema/field'
 import { makeId } from '../../core/db/repository'
@@ -19,7 +19,7 @@ import { FreightCtx } from './FreightContext'
 // Google). Tolerates permission-denied by leaving the collection empty.
 // `scope` ({field,value}) narrows the listen to a where() query — used so a
 // gaadiwala reads ONLY his own transporterId (required once rules restrict him).
-function useCloudCollection(collPath, docPath, normalize, authKey, scope = null) {
+function useCloudCollection(collPath, docPath, normalize, authKey, scope = null, onError = () => {}) {
   const [list, setList] = useState([])
   const scopeVal = scope ? scope.value : ''
   useEffect(() => {
@@ -31,12 +31,21 @@ function useCloudCollection(collPath, docPath, normalize, authKey, scope = null)
     )
     return unsub
   }, [authKey, scopeVal]) // eslint-disable-line react-hooks/exhaustive-deps
+  // every write is wrapped so a permission-denied / offline failure surfaces a
+  // banner instead of a silent "saved" (P1.6). insert() still returns the row
+  // synchronously (id is client-made) AND returns the promise on `.saved` so a
+  // caller can await it; fire-and-forget callers just get the surfaced error.
+  const wrap = (p) => { p && p.catch && p.catch(onError); return p }
   return {
     list,
-    insert: (rec) => { const id = rec.id || makeId('r'); const now = new Date().toISOString(); const row = { createdAt: now, updatedAt: now, ...rec, id }; setDoc(docPath(id), row); return row },
-    update: (id, patch) => setDoc(docPath(id), { ...patch, updatedAt: new Date().toISOString() }, { merge: true }),
-    remove: (id) => deleteDoc(docPath(id)),
-    removeWhere: (pred) => { const hit = list.filter(pred); const b = writeBatch(db); hit.forEach(r => b.delete(docPath(r.id))); b.commit(); return hit.length },
+    insert: (rec) => { const id = rec.id || makeId('r'); const now = new Date().toISOString(); const row = { createdAt: now, updatedAt: now, ...rec, id }; row.saved = wrap(setDoc(docPath(id), row)); return row },
+    update: (id, patch) => wrap(setDoc(docPath(id), { ...patch, updatedAt: new Date().toISOString() }, { merge: true })),
+    remove: (id) => wrap(deleteDoc(docPath(id))),
+    // Atomic delta on runningBalance so simultaneous saves can't clobber each
+    // other (P1.2). alertedLevel is a cosmetic hint computed from the local view
+    // — Admin "Recalculate" is the exact safety net if it ever drifts.
+    incBalance: (id, delta, level) => wrap(setDoc(docPath(id), { runningBalance: increment(Number(delta) || 0), alertedLevel: level, updatedAt: new Date().toISOString() }, { merge: true })),
+    removeWhere: (pred) => { const hit = list.filter(pred); const b = writeBatch(db); hit.forEach(r => b.delete(docPath(r.id))); wrap(b.commit()); return hit.length },
     replaceAll: async (rows) => {
       const ex = await getDocs(collPath()); const b1 = writeBatch(db); ex.forEach(d => b1.delete(d.ref)); await b1.commit()
       const b2 = writeBatch(db); (rows || []).forEach(r => { const id = r.id || makeId('r'); b2.set(docPath(id), { ...r, id }) }); await b2.commit()
@@ -76,22 +85,55 @@ async function updateGuarded(docPathFn, id, expectedRevision, patch) {
   })
 }
 
+/**
+ * Commit a WHOLE chakkar (multi-drop) in ONE Firestore transaction — all-or-
+ * nothing (P1.3). A chakkar is several entry rows sharing a batchId; passing,
+ * returning, cancelling or editing it must never leave some rows changed and
+ * others stale. `updates` are revision-guarded (optimistic lock); if ANY row
+ * moved on we abort with {ok:false,reason:'stale'} and write nothing. `inserts`
+ * (new drops on an edit) and `softDeletes` (removed drops) ride the same txn.
+ */
+async function commitBatchGuarded(docPathFn, { updates = [], inserts = [], softDeletes = [] }) {
+  return await runTransaction(db, async (tx) => {
+    const now = new Date().toISOString()
+    // Firestore requires all reads before any write.
+    const read = []
+    for (const u of updates) read.push([u, await tx.get(docPathFn(u.id))])
+    for (const [u, snap] of read) {
+      const actual = snap.exists() ? (Number(snap.data().revision) || 0) : 0
+      if (isStale(u.expectedRevision, actual)) return { ok: false, reason: 'stale' }
+    }
+    for (const [u, snap] of read) {
+      const actual = snap.exists() ? (Number(snap.data().revision) || 0) : 0
+      tx.set(docPathFn(u.id), { ...u.patch, revision: actual + 1, updatedAt: now }, { merge: true })
+    }
+    for (const ins of inserts) tx.set(docPathFn(ins.id), { createdAt: now, updatedAt: now, ...ins })
+    for (const id of softDeletes) tx.set(docPathFn(id), { deleted: true, updatedAt: now }, { merge: true })
+    return { ok: true }
+  })
+}
+
 export function FirestoreProvider({ children }) {
   const [ready, setReady] = useState(false)
   const [timedOut, setTimedOut] = useState(false)
   const [error, setError] = useState('')
   const [authKey, setAuthKey] = useState('anon')
   const [authEmail, setAuthEmail] = useState('')
+  const [writeError, setWriteError] = useState('')
+  const reportWriteError = useCallback((e) => {
+    setWriteError((e && e.message) || 'Save failed — check your connection and try again.')
+  }, [])
   useEffect(() => watchAuth((u) => {
     setAuthKey(u ? `${u.uid}:${u.email || ''}` : 'none')
     setAuthEmail(u && !u.isAnonymous ? (u.email || '').toLowerCase() : '')
   }), [])
 
-  // masters + users load whole-collection (any signed-in may read them)
-  const transporters = useCloudCollection(paths.transporters, paths.transporter, normTransporter, authKey)
-  const destinations = useCloudCollection(paths.destinations, paths.destination, normDestination, authKey)
-  const users        = useCloudCollection(paths.users, paths.user, normUser, authKey)
-  const logs         = useCloudCollection(paths.logs, paths.logDoc, (r) => r, authKey)
+  // masters + users load whole-collection (readable by any Google-signed-in
+  // user; anonymous baseline is denied — see rules nonAnon()).
+  const transporters = useCloudCollection(paths.transporters, paths.transporter, normTransporter, authKey, null, reportWriteError)
+  const destinations = useCloudCollection(paths.destinations, paths.destination, normDestination, authKey, null, reportWriteError)
+  const users        = useCloudCollection(paths.users, paths.user, normUser, authKey, null, reportWriteError)
+  const logs         = useCloudCollection(paths.logs, paths.logDoc, (r) => r, authKey, null, reportWriteError)
 
   // If the signed-in user is a gaadiwala, scope his trip/payment/settlement reads
   // to his own transporterId (matches the restrictive rules; whole-collection
@@ -101,20 +143,21 @@ export function FirestoreProvider({ children }) {
   const gTid = (me && me.role === 'gaadiwala' && me.active !== false && !isBootstrapOwner) ? (me.transporterId || '') : ''
   const scope = gTid ? { field: 'transporterId', value: gTid } : null
 
-  const entries      = useCloudCollection(paths.entries, paths.entry, normEntry, authKey, scope)
-  const advances     = useCloudCollection(paths.advances, paths.advance, normAdvance, authKey, scope)
-  const settlements  = useCloudCollection(paths.settlements, paths.settlementDoc, normSettlement, authKey, scope)
+  const entries      = useCloudCollection(paths.entries, paths.entry, normEntry, authKey, scope, reportWriteError)
+  const advances     = useCloudCollection(paths.advances, paths.advance, normAdvance, authKey, scope, reportWriteError)
+  const settlements  = useCloudCollection(paths.settlements, paths.settlementDoc, normSettlement, authKey, scope, reportWriteError)
 
   useEffect(() => {
     let done = false
     const timer = setTimeout(() => { if (!done) setTimedOut(true) }, 12000)
-    // probe users (readable by any signed-in device, incl. anonymous) so
-    // readiness resolves before Google sign-in.
-    const unsub = onSnapshot(paths.users(),
-      () => { done = true; clearTimeout(timer); setReady(true) },
-      (e) => { done = true; clearTimeout(timer); setError(e.message); setReady(true) })
-    ensureSignedIn().catch((e) => { done = true; clearTimeout(timer); setError(e.message); setTimedOut(true) })
-    return () => { clearTimeout(timer); unsub() }
+    // Readiness = anonymous baseline sign-in completing. We no longer probe a
+    // Firestore read here: masters/users are now nonAnon-only (P1.5), so an anon
+    // read would be denied. Collection listeners each degrade gracefully to []
+    // on permission-denied, and the AuthGate handles the Google sign-in step.
+    ensureSignedIn()
+      .then(() => { done = true; clearTimeout(timer); setReady(true) })
+      .catch((e) => { done = true; clearTimeout(timer); setError(e.message); setTimedOut(true) })
+    return () => clearTimeout(timer)
   }, [])
 
   const log = useCallback((action, detail, by = 'user', ref = '') => {
@@ -142,10 +185,25 @@ export function FirestoreProvider({ children }) {
 
   const value = {
     transporters, destinations,
-    entries: { ...entries, updateGuarded: (id, rev, patch) => updateGuarded(paths.entry, id, rev, patch) },
+    entries: {
+      ...entries,
+      updateGuarded: (id, rev, patch) => updateGuarded(paths.entry, id, rev, patch),
+      commitBatch: (spec) => commitBatchGuarded(paths.entry, spec),
+    },
     advances, settlements, users, logs,
     lastUsed: lastUsedStore, log, allocateNumber,
     cloud: { connected: !error, error },
   }
-  return <FreightCtx.Provider value={value}>{children}</FreightCtx.Provider>
+  return (
+    <FreightCtx.Provider value={value}>
+      {writeError && (
+        <div className="fixed top-0 inset-x-0 z-50 bg-red-600 text-white text-sm px-4 py-3 flex items-center gap-3 shadow-lg"
+          style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}>
+          <span className="flex-1">⚠️ A save didn’t go through. Check your internet and try again.</span>
+          <button onClick={() => setWriteError('')} className="font-bold bg-white/20 rounded-lg px-3 py-1">Dismiss</button>
+        </div>
+      )}
+      {children}
+    </FreightCtx.Provider>
+  )
 }

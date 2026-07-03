@@ -7,6 +7,7 @@ import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn,
 import { countsInHisab, applyTransition, isStale, findDuplicate, makeReversal } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 import { auditLine } from './src/modules/freight/logic/audit.js'
+import { applyBalance } from './src/modules/freight/logic/balance.js'
 
 const LEVELS = [5000, 10000, 15000, 20000]
 
@@ -120,5 +121,32 @@ assert.equal(transporterTotals([], [pay, rev], 't1', {}).advances, 0) // nets to
 const al = auditLine('entry.pass', { by: 'Anshul', role: 'manager', reason: '', before: { freight: 100 }, after: { freight: 100, status: 'passed' }, device: 'test-ua' })
 assert.equal(al.action, 'entry.pass'); assert.equal(al.by, 'Anshul'); assert.equal(al.device, 'test-ua')
 assert.deepEqual(al.after, { freight: 100, status: 'passed' }); assert.ok(al.ts)
+
+// ---- P1.2: applyBalance writes an ATOMIC delta (increment), not an absolute ----
+// A fake transporters handle records how the write was made.
+function fakeHandle(prev) {
+  const calls = { inc: null, upd: null }
+  return {
+    list: [{ id: 't1', runningBalance: prev, alertedLevel: 0 }],
+    incBalance: (id, delta, level) => { calls.inc = { id, delta, level } },
+    update: (id, patch) => { calls.upd = { id, patch } },
+    calls,
+  }
+}
+// +2000 onto a 4000 balance → writes delta +2000 (NOT the absolute 6000) via incBalance
+let h = fakeHandle(4000)
+let crossed = applyBalance(h, 't1', 2000)
+assert.equal(h.calls.inc.delta, 2000, 'writes the delta, not the absolute')
+assert.equal(h.calls.upd, null, 'uses atomic incBalance, not absolute update')
+assert.equal(h.calls.inc.level, 5000, 'alert hint reflects the new 6000 balance')
+assert.equal(crossed, 5000, 'returns the freshly-crossed threshold for the toast')
+// a payment (negative delta) reduces the balance atomically too
+h = fakeHandle(6000)
+applyBalance(h, 't1', -1500)
+assert.equal(h.calls.inc.delta, -1500)
+// falls back to absolute update only when no atomic method exists (offline/local)
+const noInc = { list: [{ id: 't1', runningBalance: 1000 }], update: (id, patch) => { noInc.p = patch } }
+applyBalance(noInc, 't1', 500)
+assert.equal(noInc.p.runningBalance, 1500, 'fallback writes prev+delta')
 
 console.log('ALL FREIGHT CALC TESTS PASSED')

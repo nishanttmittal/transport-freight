@@ -23,7 +23,10 @@ function Users() {
     const email = form.email.trim().toLowerCase()
     if (!email) return show('Enter an email', 2000)
     if (form.role === 'gaadiwala' && !form.transporterId) return show('Pick which gaadiwala', 2200)
-    users.insert({ email, name: form.name.trim(), role: form.role, transporterId: form.role === 'gaadiwala' ? form.transporterId : '', active: true })
+    // doc id MUST be the email — the Firestore rules resolve a user's role via
+    // users/{email} (a direct doc lookup). A random id would let the user appear
+    // in this list yet be denied by the rules (silent permission failure).
+    users.insert({ id: email, email, name: form.name.trim(), role: form.role, transporterId: form.role === 'gaadiwala' ? form.transporterId : '', active: true })
     setForm({ email: '', name: '', role: 'manager', transporterId: '' }); show('User added ✓')
   }
   const list = (users.list || []).filter(u => !u.deleted)
