@@ -1,7 +1,9 @@
 /**
- * Masters — manage the Transporters and Destinations (transport offices) lists
- * that feed the Entry dropdowns. Soft-delete only (records keep history). The
- * "no re-typing transport names" requirement lives here.
+ * Masters — manage the Gaadiwalas and Destinations (transport offices) lists
+ * that feed the Entry dropdowns. Soft-delete only (records keep history).
+ * For gaadiwalas, the OWNER can also attach an app LOGIN (his Gmail) right here —
+ * this creates/updates a `users` doc (role=gaadiwala, linked to this transporter),
+ * the same thing Admin → Users & Access does, but where you actually add gaadiwalas.
  */
 import { useState } from 'react'
 import { Button, Card, TextInput, useToast, Toast } from '../../../core/ui'
@@ -9,7 +11,7 @@ import { useFreight } from '../FreightContext'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
-function MasterList({ title, repo, withPhone }) {
+function MasterList({ title, repo, withPhone, withLogin, owner, users }) {
   const { msg, show } = useToast()
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -25,6 +27,19 @@ function MasterList({ title, repo, withPhone }) {
   const saveEdit = (id) => { if (editName.trim()) repo.update(id, { name: editName.trim() }); setEditId('') }
   const softDelete = (id, n) => { if (window.confirm(`Remove ${n}? (history is kept)`)) repo.update(id, { deleted: true }) }
 
+  // Login helpers (owner only) — the linked login for a gaadiwala is a users doc.
+  const loginFor = (r) => (users?.list || []).find(u => !u.deleted && u.active !== false && u.role === 'gaadiwala' && u.transporterId === r.id)
+  const giveLogin = (r) => {
+    const email = (window.prompt(`App login for ${r.name}\n\nEnter his Google (Gmail) address:`) || '').trim().toLowerCase()
+    if (!email) return
+    if (!email.includes('@') || !email.includes('.')) return show('That doesn’t look like an email', 2200)
+    const existing = (users.list || []).find(u => (u.email || '').toLowerCase() === email)
+    if (existing) users.update(existing.id, { role: 'gaadiwala', transporterId: r.id, name: r.name, active: true, deleted: false })
+    else users.insert({ email, name: r.name, role: 'gaadiwala', transporterId: r.id, active: true, deleted: false })
+    show('Login added ✓ — he can now sign in with that Gmail', 2600)
+  }
+  const removeLogin = (login) => { if (window.confirm(`Remove ${login.email}'s login? He won’t be able to sign in.`)) users.update(login.id, { active: false }) }
+
   const list = active(repo.list).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 
   return (
@@ -38,34 +53,48 @@ function MasterList({ title, repo, withPhone }) {
       </div>
       <div className="divide-y divide-slate-100">
         {list.length === 0 && <div className="py-4 text-center text-slate-400 text-sm">None yet.</div>}
-        {list.map(r => (
-          <div key={r.id} className="py-2.5 flex items-center gap-2">
-            {editId === r.id ? (
-              <>
-                <TextInput value={editName} autoFocus onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveEdit(r.id)} />
-                <Button size="sm" onClick={() => saveEdit(r.id)}>Save</Button>
-                <Button size="sm" variant="neutral" onClick={() => setEditId('')}>✕</Button>
-              </>
-            ) : (
-              <>
-                <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{r.name}</div>{r.phone && <div className="text-xs text-slate-400">{r.phone}</div>}</div>
-                <button onClick={() => { setEditId(r.id); setEditName(r.name) }} className="text-xs font-bold text-slate-500 bg-slate-100 rounded-lg px-2.5 py-1.5">Edit</button>
-                <button onClick={() => softDelete(r.id, r.name)} className="text-xs font-bold text-red-500 bg-red-50 rounded-lg px-2.5 py-1.5">Remove</button>
-              </>
-            )}
-          </div>
-        ))}
+        {list.map(r => {
+          const login = withLogin && owner ? loginFor(r) : null
+          return (
+            <div key={r.id} className="py-2.5 space-y-1.5">
+              <div className="flex items-center gap-2">
+                {editId === r.id ? (
+                  <>
+                    <TextInput value={editName} autoFocus onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveEdit(r.id)} />
+                    <Button size="sm" onClick={() => saveEdit(r.id)}>Save</Button>
+                    <Button size="sm" variant="neutral" onClick={() => setEditId('')}>✕</Button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{r.name}</div>{r.phone && <div className="text-xs text-slate-400">{r.phone}</div>}</div>
+                    <button onClick={() => { setEditId(r.id); setEditName(r.name) }} className="text-xs font-bold text-slate-500 bg-slate-100 rounded-lg px-2.5 py-1.5">Edit</button>
+                    <button onClick={() => softDelete(r.id, r.name)} className="text-xs font-bold text-red-500 bg-red-50 rounded-lg px-2.5 py-1.5">Remove</button>
+                  </>
+                )}
+              </div>
+              {withLogin && owner && editId !== r.id && (
+                login
+                  ? <div className="flex items-center gap-2 pl-0.5">
+                      <span className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1 truncate">📱 login: {login.email}</span>
+                      <button onClick={() => removeLogin(login)} className="text-[11px] font-bold text-red-500">remove login</button>
+                    </div>
+                  : <button onClick={() => giveLogin(r)} className="text-xs font-bold text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5">＋ Give app login (add Gmail)</button>
+              )}
+            </div>
+          )
+        })}
       </div>
     </Card>
   )
 }
 
-export default function Masters() {
-  const { transporters, destinations } = useFreight()
+export default function Masters({ owner = false }) {
+  const { transporters, destinations, users } = useFreight()
   return (
     <div className="max-w-lg mx-auto p-4 space-y-4">
-      <MasterList title="Gaadiwalas" repo={transporters} withPhone />
+      <MasterList title="Gaadiwalas" repo={transporters} withPhone withLogin owner={owner} users={users} />
       <MasterList title="Destinations" repo={destinations} />
+      {!owner && <p className="text-center text-[11px] text-slate-400">Giving a gaadiwala an app login is owner-only.</p>}
     </div>
   )
 }
