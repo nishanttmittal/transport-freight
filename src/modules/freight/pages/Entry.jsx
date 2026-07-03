@@ -136,8 +136,12 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
       const bId = makeId('batch')
       const challan = pendingMode ? 0 : await allocateNumber('challan')
       let grand = 0
-      drops.forEach((d) => {
+      // All drops of the chakkar are written in ONE atomic transaction (P1.3),
+      // so a mid-save failure can't leave a half-recorded vehicle (which a retry
+      // would then double-count).
+      const inserts = drops.map((d) => {
         const rec = {
+          id: makeId('r'),
           date: veh.date, challanNo: challan, status: pendingMode ? 'pending' : 'passed', revision: 0,
           submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId,
           gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d),
@@ -145,8 +149,9 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
           sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false,
         }
         grand += entryTotal(rec)
-        entries.insert(rec)
+        return rec
       })
+      await entries.commitBatch({ inserts })
       const n = drops.length
       lastUsed.set({ ...(lastUsed.get() || {}), gaadiNumber: veh.gaadiNumber })
       if (pendingMode) {
