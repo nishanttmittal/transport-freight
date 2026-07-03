@@ -6,7 +6,7 @@
 import { Card } from '../../../core/ui'
 import { fmtNum, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
-import { entryTotal } from '../logic/calc'
+import { entryTotal, unsettledFrom } from '../logic/calc'
 import { STATUS } from '../logic/status'
 import { fmtChallan } from '../config'
 
@@ -24,16 +24,22 @@ function groupBatches(rows) {
 }
 
 export default function GaadiwalaChakkarList({ transporterId }) {
-  const { entries, destinations } = useFreight()
+  const { entries, destinations, settlements } = useFreight()
   const destName = (id) => destinations.list.find(d => d.id === id)?.name || ''
-  const mine = (entries.list || []).filter(e => e.transporterId === transporterId && !e.deleted && (e.status || STATUS.passed) !== STATUS.voided)
+  // only this (unsettled) period — chakkars clear once the hisab is settled
+  const from = unsettledFrom(settlements.list, transporterId)
+  const inWindow = (d) => !from || (d || '') > from
+  const mine = (entries.list || []).filter(e => e.transporterId === transporterId && !e.deleted && (e.status || STATUS.passed) !== STATUS.voided && inWindow(e.date))
   const batches = groupBatches(mine)
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (Number(b.challanNo) || 0) - (Number(a.challanNo) || 0))
     .slice(0, 50)
 
   return (
     <div className="max-w-lg mx-auto px-4 pb-40 space-y-2">
-      <div className="font-bold text-slate-700 text-sm pt-3">Your chakkars ({batches.length})</div>
+      <div className="pt-3">
+        <div className="font-bold text-slate-700 text-sm">Your chakkars ({batches.length})</div>
+        <div className="text-[11px] text-slate-400">This period — until your hisab is settled.</div>
+      </div>
       {batches.length === 0 ? (
         <div className="text-center text-slate-400 text-sm py-6">No chakkars yet — add one above.</div>
       ) : batches.map(b => (
