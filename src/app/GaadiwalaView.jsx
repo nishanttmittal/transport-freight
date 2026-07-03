@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import Entry from '../modules/freight/pages/Entry'
 import GaadiwalaHisab from '../modules/freight/pages/GaadiwalaHisab'
+import GaadiwalaChakkarList from '../modules/freight/pages/GaadiwalaChakkarList'
 
 const LOGO = `${import.meta.env.BASE_URL}unico-logo.png`
 
@@ -49,7 +50,10 @@ export default function GaadiwalaView({ transporterId, name, onSwitch }) {
       {editBatch ? (
         <Entry editBatch={editBatch} lockTransporterId={transporterId} lockTransporterName={name} by={name} onDone={() => setEditBatch(null)} />
       ) : tab === 'new' ? (
-        <Entry pendingMode lockTransporterId={transporterId} lockTransporterName={name} by={name} />
+        <>
+          <Entry pendingMode lockTransporterId={transporterId} lockTransporterName={name} by={name} />
+          <GaadiwalaChakkarList transporterId={transporterId} />
+        </>
       ) : (
         <GaadiwalaHisab transporterId={transporterId} onEdit={(rows) => { setEditBatch(rows) }} />
       )}

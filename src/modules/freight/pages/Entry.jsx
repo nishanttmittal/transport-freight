@@ -235,8 +235,8 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
 
           <div className="grid grid-cols-2 gap-3">
             <div><span className="text-xs font-semibold text-slate-500">Freight</span><NumberInput value={d.freight} placeholder="0" onChange={e => setDropField(i, 'freight')(e.target.value)} /></div>
-            <div><span className="text-xs font-semibold text-slate-500">LR Charge</span><NumberInput value={d.lrCharge} placeholder="0" onChange={e => setDropField(i, 'lrCharge')(e.target.value)} /></div>
-            <div><span className="text-xs font-semibold text-slate-500">Unloading</span><NumberInput value={d.unloading} placeholder="0" onChange={e => setDropField(i, 'unloading')(e.target.value)} /></div>
+            <div><span className="text-xs font-semibold text-slate-500">Bilti Charge</span><NumberInput value={d.lrCharge} placeholder="0" onChange={e => setDropField(i, 'lrCharge')(e.target.value)} /></div>
+            <div><span className="text-xs font-semibold text-slate-500">Labour</span><NumberInput value={d.unloading} placeholder="0" onChange={e => setDropField(i, 'unloading')(e.target.value)} /></div>
             <div><span className="text-xs font-semibold text-slate-500">Misc</span><NumberInput value={d.misc} placeholder="0" onChange={e => setDropField(i, 'misc')(e.target.value)} /></div>
           </div>
 
