@@ -13,6 +13,7 @@ import { levelStyle } from '../logic/balance'
 import { shareStatementPdf } from '../logic/pdf'
 import { canonicalSettlement, sha256hex } from '../logic/hash'
 import { THRESHOLD_LEVELS, fmtChallan } from '../config'
+import Entry from './Entry'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
@@ -20,6 +21,12 @@ export default function Hisab({ owner = false, by = '' }) {
   const { transporters, destinations, entries, advances, settlements, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
   const [tid, setTid] = useState('')
+  const [editBatch, setEditBatch] = useState(null)
+  const openEdit = (l) => {
+    const e0 = entries.list.find(x => x.id === l.id); if (!e0) return
+    const rows = active(entries.list).filter(e => e.batchId === e0.batchId)
+    setEditBatch(rows.length ? rows : [e0])
+  }
 
   const tList = active(transporters.list).filter(t => t.active !== false)
   const destName = (id) => (destinations.list.find(d => d.id === id)?.name) || '—'
@@ -78,6 +85,10 @@ export default function Hisab({ owner = false, by = '' }) {
     doShare()
   }
 
+  if (editBatch) {
+    return <Entry editBatch={editBatch} ownerEdit lockTransporterId={tid} lockTransporterName={transporter?.name || ''} by={by} level={owner ? 'owner' : 'incharge'} onDone={() => setEditBatch(null)} />
+  }
+
   return (
     <div className="max-w-lg mx-auto p-4 space-y-4">
       <Toast msg={msg} />
@@ -123,6 +134,7 @@ export default function Hisab({ owner = false, by = '' }) {
                       <div className="text-xs text-slate-400">{fmtDate(l.date)}{l.kind === 'freight' && l.bags ? ` · ${l.bags} bags` : ''}{l.kind === 'advance' && l.note ? ` · ${l.note}` : ''}</div>
                     </div>
                     <div className={`text-sm font-bold font-mono ${l.kind === 'advance' ? 'text-emerald-600' : 'text-slate-800'}`}>{l.kind === 'advance' ? '−' : '+'}₹{fmtNum(l.amount)}</div>
+                    {l.kind === 'freight' && <button onClick={() => openEdit(l)} className="text-xs font-bold text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5">Edit</button>}
                   </div>
                 ))}
               </div>

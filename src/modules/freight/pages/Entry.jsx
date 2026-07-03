@@ -23,7 +23,7 @@ const emptyDrop = () => ({ destinationId: '', bags: '', pvtMarka: '', freight: '
 
 const dropFromRow = (r) => ({ destinationId: r.destinationId || '', bags: r.bags ? String(r.bags) : '', pvtMarka: r.pvtMarka || '', freight: r.freight ? String(r.freight) : '', lrCharge: r.lrCharge ? String(r.lrCharge) : '', unloading: r.unloading ? String(r.unloading) : '', misc: r.misc ? String(r.misc) : '', extraPoint: r.extraPoint ? String(r.extraPoint) : '', remarks: r.remarks || '' })
 
-export default function Entry({ by = '', level = '', pendingMode = false, lockTransporterId = '', lockTransporterName = '', editBatch = null, onDone = null }) {
+export default function Entry({ by = '', level = '', pendingMode = false, lockTransporterId = '', lockTransporterName = '', editBatch = null, ownerEdit = false, onDone = null }) {
   const { transporters, destinations, entries, settlements, lastUsed, logs, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
@@ -85,25 +85,40 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
     if (busy) return
     const gName = editing ? (editBatch[0].transporterName || '') : (lockTransporterName || tList.find(t => t.id === veh.transporterId)?.name || '')
 
-    // EDIT MODE — update existing rows and resubmit as pending.
+    // EDIT MODE — gaadiwala fix (→pending) OR owner/staff edit (stays passed, balance adjusts).
     if (editing) {
+      if (ownerEdit && lockedOn(settlements.list, veh.transporterId, veh.date)) return show('This hisab is settled & locked — cannot edit', 2600)
       setBusy(true)
       try {
+        const oldTotal = editBatch.reduce((s, r) => s + entryTotal(r), 0)
+        const newStatus = ownerEdit ? 'passed' : 'pending'
+        const batchChallan = editBatch[0].challanNo || 0
         const n = Math.max(drops.length, editBatch.length)
         for (let i = 0; i < n; i++) {
           const d = drops[i]; const row = editBatch[i]
           if (row && d) {
-            const res = await entries.updateGuarded(row.id, row.revision, { date: veh.date, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), status: 'pending', correctionReason: '' })
+            const patch = { date: veh.date, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), status: newStatus }
+            if (!ownerEdit) patch.correctionReason = ''
+            const res = await entries.updateGuarded(row.id, row.revision, patch)
             if (!res.ok) { show('Refresh — changed by someone else', 2600); return }
           } else if (row && !d) {
             entries.update(row.id, { deleted: true })
           } else if (!row && d) {
-            entries.insert({ date: veh.date, status: 'pending', revision: 0, challanNo: 0, submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), batchId: editBatch[0].batchId, createdByUser: by || '', sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false })
+            entries.insert({ date: veh.date, status: newStatus, revision: 0, challanNo: ownerEdit ? batchChallan : 0, submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), batchId: editBatch[0].batchId, createdByUser: by || '', sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false })
           }
         }
-        log('entry.resubmit', `${gName} ${fmtDate(veh.date)}`, by, editBatch[0].batchId)
-        logs.insert(auditLine('entry.resubmit', { by, role: level, after: { batchId: editBatch[0].batchId }, device: navigator.userAgent }))
-        show('Resubmitted for approval ✓', 2400)
+        if (ownerEdit) {
+          const newTotal = drops.reduce((s, dd) => s + entryTotal(dd), 0)
+          const delta = newTotal - oldTotal
+          if (delta) applyBalance(transporters, veh.transporterId, delta)
+          log('entry.edit', `${fmtChallan(batchChallan)} ${fmtDate(veh.date)} Δ₹${delta}`, by, editBatch[0].batchId)
+          logs.insert(auditLine('entry.edit', { by, role: level, before: { total: oldTotal }, after: { total: newTotal }, device: navigator.userAgent }))
+          show('Entry updated ✓', 2400)
+        } else {
+          log('entry.resubmit', `${gName} ${fmtDate(veh.date)}`, by, editBatch[0].batchId)
+          logs.insert(auditLine('entry.resubmit', { by, role: level, after: { batchId: editBatch[0].batchId }, device: navigator.userAgent }))
+          show('Resubmitted for approval ✓', 2400)
+        }
         onDone && onDone()
       } finally { setBusy(false) }
       return
@@ -155,8 +170,8 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
       <Card className="p-4 space-y-4">
         {pendingMode || editing ? (
           <div className="flex items-center justify-between bg-indigo-600 text-white rounded-2xl px-4 py-3">
-            <span className="text-xs uppercase tracking-wide text-indigo-200 font-bold">{editing ? 'Editing chakkar' : 'New trip'}</span>
-            <span className="text-sm font-bold">Sent for approval</span>
+            <span className="text-xs uppercase tracking-wide text-indigo-200 font-bold">{editing ? (ownerEdit ? 'Edit trip' : 'Editing chakkar') : 'New trip'}</span>
+            <span className="text-sm font-bold font-mono">{ownerEdit ? fmtChallan(editBatch[0].challanNo) : 'Sent for approval'}</span>
           </div>
         ) : (
           <div className="flex items-center justify-between bg-slate-800 text-white rounded-2xl px-4 py-3">
@@ -250,7 +265,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
             <div className="text-2xl font-bold text-slate-800 font-mono">₹{fmtNum(grandTotal)}</div>
           </div>
           {editing && <Button size="lg" variant="neutral" onClick={() => onDone && onDone()} disabled={busy}>Cancel</Button>}
-          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-6">{busy ? 'Saving…' : (pendingMode ? 'Submit' : editing ? 'Resubmit' : 'Save')}</Button>
+          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-6">{busy ? 'Saving…' : (pendingMode ? 'Submit' : editing ? (ownerEdit ? 'Save' : 'Resubmit') : 'Save')}</Button>
         </div>
       </div>
     </div>

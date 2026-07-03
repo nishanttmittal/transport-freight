@@ -5,7 +5,7 @@
  */
 import { useState } from 'react'
 import { Button, Card, TextInput, Select, PasswordGate, useToast, Toast } from '../../../core/ui'
-import { fmtNum, todayStr } from '../../../core/utils/format'
+import { fmtNum, fmtDate, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { recomputeBalance, levelStyle } from '../logic/balance'
 import { thresholdLevel } from '../logic/calc'
@@ -102,11 +102,41 @@ function Tools() {
   )
 }
 
+function OldHisab() {
+  const { settlements, transporters } = useFreight()
+  const list = (settlements.list || []).filter(s => !s.deleted).slice()
+    .sort((a, b) => (b.periodTo || '').localeCompare(a.periodTo || '') || (Number(b.settlementNo) || 0) - (Number(a.settlementNo) || 0))
+  const tName = (s) => s.transporterName || transporters.list.find(t => t.id === s.transporterId)?.name || '—'
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="font-bold text-slate-700">Old Hisab — settled periods</div>
+      <p className="text-xs text-slate-400">Locked settlement history (owner-only). Each is a frozen snapshot of a cleared hisab.</p>
+      {list.length === 0 ? (
+        <div className="py-4 text-center text-slate-400 text-sm">No settled hisabs yet.</div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {list.map(s => (
+            <div key={s.id} className="py-2.5">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold text-slate-800 truncate">SET-{String(s.settlementNo || 0).padStart(4, '0')} · {tName(s)}</div>
+                <div className="font-mono font-bold text-slate-800">₹{fmtNum(s.closingBalance ?? s.balance)}</div>
+              </div>
+              <div className="text-xs text-slate-400">{s.periodFrom ? fmtDate(s.periodFrom) + ' → ' : ''}{fmtDate(s.periodTo)} · {s.tripCount || 0} trips · freight ₹{fmtNum(s.totalFreight)} · advances ₹{fmtNum(s.totalAdvances ?? s.totalPayments)}</div>
+              <div className="text-[11px] text-slate-400">settled by {s.settledBy || s.finalizedBy || '—'}{s.settlementHash ? ` · fingerprint ${String(s.settlementHash).slice(0, 10)}` : ''}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export default function Admin() {
   return (
     <PasswordGate password={ADMIN_PASSWORD} title="Admin Access">
       <div className="max-w-lg mx-auto p-4 space-y-4">
         <Users />
+        <OldHisab />
         <Tools />
       </div>
     </PasswordGate>
