@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { Card, Button, useToast, Toast } from '../../../core/ui'
 import { fmtNum, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
-import { entryTotal } from '../logic/calc'
+import { entryTotal, lockedOn } from '../logic/calc'
 import { applyTransition, STATUS } from '../logic/status'
 import { auditLine } from '../logic/audit'
 import { applyBalance } from '../logic/balance'
@@ -36,7 +36,7 @@ function groupBatches(rows) {
 }
 
 export default function Review({ owner = false, by = '', level = '' }) {
-  const { transporters, entries, logs, log, allocateNumber } = useFreight()
+  const { transporters, entries, settlements, logs, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
 
@@ -44,9 +44,14 @@ export default function Review({ owner = false, by = '', level = '' }) {
   const audit = (a) => logs.insert(auditLine(a.action, { ...a, device: navigator.userAgent }))
   const live = (entries.list || []).filter(e => !e.deleted)
 
+  // An entry whose date falls in a finalized (locked) settlement period. Once a
+  // hisab is settled, only the owner sees those chakkars in Approvals — for
+  // everyone else they drop out of the list (owner keeps them to edit/correct).
+  const isSettled = (e) => !!lockedOn(settlements.list, e.transporterId, e.date)
+
   const pending = groupBatches(live.filter(e => e.status === STATUS.pending || e.status === STATUS.needs_correction))
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-  const passed = groupBatches(live.filter(e => (e.status || STATUS.passed) === STATUS.passed))
+  const passed = groupBatches(live.filter(e => (e.status || STATUS.passed) === STATUS.passed && (owner || !isSettled(e))))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 20)
 
   // Apply an action to a WHOLE batch in ONE atomic transaction (P1.3) — every
