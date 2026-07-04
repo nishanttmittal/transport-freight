@@ -8,7 +8,8 @@ import { Button, Card, TextInput, Select, PasswordGate, useToast, Toast } from '
 import { fmtNum, fmtDate, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { recomputeBalance, levelStyle } from '../logic/balance'
-import { thresholdLevel } from '../logic/calc'
+import { thresholdLevel, ledgerLines, transporterTotals, unsettledFrom, openingBalance } from '../logic/calc'
+import { shareStatementPdf } from '../logic/pdf'
 import { ADMIN_PASSWORD, THRESHOLD_LEVELS, OWNER_EMAILS } from '../config'
 
 function Users() {
@@ -106,23 +107,51 @@ function Tools() {
 }
 
 function OldHisab() {
-  const { settlements, transporters } = useFreight()
+  const { settlements, transporters, entries, advances, destinations } = useFreight()
   const list = (settlements.list || []).filter(s => !s.deleted).slice()
     .sort((a, b) => (b.periodTo || '').localeCompare(a.periodTo || '') || (Number(b.settlementNo) || 0) - (Number(a.settlementNo) || 0))
   const tName = (s) => s.transporterName || transporters.list.find(t => t.id === s.transporterId)?.name || '—'
+  const destName = (id) => destinations.list.find(d => d.id === id)?.name || ''
+
+  // Lower bound of a settled period = the previous settlement's cutoff for the
+  // same gaadiwala (exclusive). '' if this was the first settled period.
+  const fromBound = (s) => {
+    const prior = (settlements.list || [])
+      .filter(x => !x.deleted && x.transporterId === s.transporterId && x.locked !== false && (x.periodTo || '') < (s.periodTo || ''))
+      .sort((a, b) => (a.periodTo || '').localeCompare(b.periodTo || ''))
+    return prior.length ? prior[prior.length - 1].periodTo : ''
+  }
+
+  // Rebuild that settled period's statement: dated lines from the (locked) records,
+  // but TOTALS from the frozen settlement snapshot — that's the proven, signed-off record.
+  const pdf = (s) => {
+    const from = fromBound(s)
+    const lines = ledgerLines(entries.list, advances.list, s.transporterId, { from, upToDate: s.periodTo, opening: Number(s.openingBalance) || 0 })
+    const totals = {
+      opening: Number(s.openingBalance) || 0,
+      freight: Number(s.totalFreight) || 0,
+      advances: Number(s.totalAdvances ?? s.totalPayments) || 0,
+      balance: Number(s.closingBalance ?? s.balance) || 0,
+    }
+    shareStatementPdf({ transporterName: tName(s), lines, destName, totals, period: { from, to: s.periodTo } })
+  }
+
   return (
     <Card className="p-4 space-y-3">
       <div className="font-bold text-slate-700">Old Hisab — settled periods</div>
-      <p className="text-xs text-slate-400">Locked settlement history (owner-only). Each is a frozen snapshot of a cleared hisab.</p>
+      <p className="text-xs text-slate-400">Locked settlement history (owner-only). Each is a frozen snapshot of a cleared hisab. Tap PDF to re-share a settled statement.</p>
       {list.length === 0 ? (
         <div className="py-4 text-center text-slate-400 text-sm">No settled hisabs yet.</div>
       ) : (
         <div className="divide-y divide-slate-100">
           {list.map(s => (
             <div key={s.id} className="py-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <div className="font-semibold text-slate-800 truncate">SET-{String(s.settlementNo || 0).padStart(4, '0')} · {tName(s)}</div>
-                <div className="font-mono font-bold text-slate-800">₹{fmtNum(s.closingBalance ?? s.balance)}</div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="font-mono font-bold text-slate-800">₹{fmtNum(s.closingBalance ?? s.balance)}</div>
+                  <button onClick={() => pdf(s)} className="text-xs font-bold rounded-lg px-2.5 py-1.5 bg-slate-100 text-slate-600 active:bg-slate-200">📄 PDF</button>
+                </div>
               </div>
               <div className="text-xs text-slate-400">{s.periodFrom ? fmtDate(s.periodFrom) + ' → ' : ''}{fmtDate(s.periodTo)} · {s.tripCount || 0} trips · freight ₹{fmtNum(s.totalFreight)} · advances ₹{fmtNum(s.totalAdvances ?? s.totalPayments)}</div>
               <div className="text-[11px] text-slate-400">settled by {s.settledBy || s.finalizedBy || '—'}{s.settlementHash ? ` · fingerprint ${String(s.settlementHash).slice(0, 10)}` : ''}</div>
@@ -134,11 +163,41 @@ function OldHisab() {
   )
 }
 
+// Owner shortcut: export any gaadiwala's CURRENT (unsettled) running hisab as PDF
+// without leaving Admin. Same statement the Hisab screen's "Share PDF" produces.
+function CurrentHisabPdf() {
+  const { transporters, entries, advances, destinations, settlements } = useFreight()
+  const [tid, setTid] = useState('')
+  const tActive = (transporters.list || []).filter(t => !t.deleted && t.active !== false)
+  const destName = (id) => destinations.list.find(d => d.id === id)?.name || ''
+
+  const share = () => {
+    if (!tid) return
+    const t = transporters.list.find(x => x.id === tid)
+    const from = unsettledFrom(settlements.list, tid)
+    const opening = openingBalance(settlements.list, tid)
+    const opts = { from, opening }
+    const lines = ledgerLines(entries.list, advances.list, tid, opts)
+    const totals = transporterTotals(entries.list, advances.list, tid, opts)
+    shareStatementPdf({ transporterName: t?.name || '—', lines, destName, totals, period: { from, to: todayStr() } })
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="font-bold text-slate-700">Current hisab → PDF</div>
+      <p className="text-xs text-slate-400">Export any gaadiwala's live running statement (up to today).</p>
+      <Select options={[{ value: '', label: 'Pick a gaadiwala…' }, ...tActive.map(t => ({ value: t.id, label: t.name }))]} value={tid} onChange={(e) => setTid(e.target.value)} />
+      <Button className="w-full" disabled={!tid} onClick={share}>📄 Export current hisab PDF</Button>
+    </Card>
+  )
+}
+
 export default function Admin() {
   return (
     <PasswordGate password={ADMIN_PASSWORD} title="Admin Access">
       <div className="max-w-lg mx-auto p-4 space-y-4">
         <Users />
+        <CurrentHisabPdf />
         <OldHisab />
         <Tools />
       </div>
