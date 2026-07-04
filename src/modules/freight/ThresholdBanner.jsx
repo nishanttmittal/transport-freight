@@ -5,15 +5,16 @@
  * bridge with no rework. `onOpen(transporterId)` jumps to that hisab.
  */
 import { fmtNum } from '../../core/utils/format'
-import { thresholdLevel, transporterTotals, unsettledFrom } from './logic/calc'
+import { thresholdLevel, transporterTotals, unsettledFrom, openingBalance } from './logic/calc'
 import { levelStyle } from './logic/balance'
 import { THRESHOLD_LEVELS } from './config'
 
 /** Live balance for a transporter (prefer maintained runningBalance; fall back). */
 export function balanceOf(t, { entries, advances, settlements }) {
-  if (typeof t.runningBalance === 'number' && t.runningBalance !== 0) return t.runningBalance
+  if (typeof t.runningBalance === 'number') return t.runningBalance   // 0 is a valid cached balance — trust it
   const from = unsettledFrom(settlements, t.id)
-  return transporterTotals(entries, advances, t.id, { from }).balance
+  const opening = openingBalance(settlements, t.id)
+  return transporterTotals(entries, advances, t.id, { from, opening }).balance
 }
 
 export default function ThresholdBanner({ transporters, state, onOpen }) {

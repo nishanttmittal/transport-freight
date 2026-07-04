@@ -7,7 +7,7 @@
 import { Card, Button, useToast, Toast } from '../../../core/ui'
 import { fmtNum, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
-import { entryTotal, transporterTotals, unsettledFrom } from '../logic/calc'
+import { entryTotal, transporterTotals, unsettledFrom, openingBalance } from '../logic/calc'
 import { STATUS } from '../logic/status'
 import { fmtChallan, fmtPayment } from '../config'
 
@@ -51,10 +51,11 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
   const { msg, show } = useToast()
 
   const from = unsettledFrom(settlements.list, transporterId)
+  const opening = openingBalance(settlements.list, transporterId)   // carried-forward remainder from last settle
   const inWindow = (d) => !from || (d || '') > from
   const mine = (entries.list || []).filter(e => e.transporterId === transporterId && !e.deleted && inWindow(e.date))
   const myPays = (advances.list || []).filter(a => a.transporterId === transporterId && !a.deleted && inWindow(a.date))
-  const balance = transporterTotals(entries.list, advances.list, transporterId, { from }).balance
+  const balance = transporterTotals(entries.list, advances.list, transporterId, { from, opening }).balance
 
   const byStatus = (s) => groupBatches(mine.filter(e => (e.status || STATUS.passed) === s)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
   const needs = byStatus(STATUS.needs_correction)

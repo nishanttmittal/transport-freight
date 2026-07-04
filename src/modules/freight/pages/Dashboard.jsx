@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { Card } from '../../../core/ui'
 import { fmtNum, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
-import { entryTotal, transporterTotals, unsettledFrom, thresholdLevel } from '../logic/calc'
+import { entryTotal, transporterTotals, unsettledFrom, openingBalance, thresholdLevel } from '../logic/calc'
 import { levelStyle } from '../logic/balance'
 import ThresholdBanner, { balanceOf } from '../ThresholdBanner'
 import { THRESHOLD_LEVELS } from '../config'
@@ -52,7 +52,8 @@ export default function Dashboard() {
           const level = thresholdLevel(bal, THRESHOLD_LEVELS)
           const s = levelStyle(level)
           const from = unsettledFrom(settlements.list, t.id)
-          const tot = transporterTotals(entries.list, advances.list, t.id, { from })
+          const opening = openingBalance(settlements.list, t.id)   // include carried-forward remainder
+          const tot = transporterTotals(entries.list, advances.list, t.id, { from, opening })
           const isOpen = openId === t.id
           return (
             <Card key={t.id} className={`p-4 ${level > 0 ? 'ring-1 ' + s.ring : ''}`}>
