@@ -5,5 +5,5 @@
 export { default as Button } from './Button'
 export { default as Card, FieldLabel } from './Card'
 export { default as PasswordGate } from './PasswordGate'
-export { TextInput, NumberInput, DateInput, Select, NumberStepper, SearchBar } from './inputs'
+export { TextInput, NumberInput, DateInput, Select, Combobox, NumberStepper, SearchBar } from './inputs'
 export { useToast, Toast } from './Toast'

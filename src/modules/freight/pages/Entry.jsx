@@ -7,7 +7,7 @@
  * every transport office's amount stays clean and is never double-counted.
  */
 import { useState } from 'react'
-import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Select, useToast, Toast } from '../../../core/ui'
+import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Combobox, useToast, Toast } from '../../../core/ui'
 import { todayStr, fmtNum, fmtDate } from '../../../core/utils/format'
 import { makeId } from '../../../core/db/repository'
 import { useFreight } from '../FreightContext'
@@ -17,7 +17,6 @@ import { auditLine } from '../logic/audit'
 import { applyBalance } from '../logic/balance'
 import { EXTRA_POINT_HINT, CHALLAN_START, fmtChallan } from '../config'
 
-const ADD = '__add__'
 const active = (list) => (list || []).filter(x => !x.deleted && x.active !== false)
 const emptyDrop = () => ({ destinationId: '', bags: '', pvtMarka: '', freight: '', lrCharge: '', unloading: '', misc: '', extraPoint: '', remarks: '' })
 
@@ -34,9 +33,6 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
     ? { date: editBatch[0].date, transporterId: editBatch[0].transporterId, gaadiNumber: editBatch[0].gaadiNumber || '' }
     : { date: todayStr(), transporterId: lockTransporterId || '', gaadiNumber: remembered.gaadiNumber || '' })
   const [drops, setDrops] = useState(() => editing ? editBatch.map(dropFromRow) : [emptyDrop()])
-  // inline "add new master": null | { type:'transporter' } | { type:'destination', i }
-  const [adding, setAdding] = useState(null)
-  const [newName, setNewName] = useState('')
 
   const setVehField = (k) => (v) => setVeh(s => ({ ...s, [k]: v }))
   const setDropField = (i, k) => (v) => setDrops(ds => ds.map((d, idx) => idx === i ? { ...d, [k]: v } : d))
@@ -46,25 +42,21 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
   const grandTotal = drops.reduce((s, d) => s + entryTotal(d), 0)
   const challanNo = nextChallanNo(entries.list, CHALLAN_START) // the number this Save will get
 
-  const tOptions = [{ value: '', label: 'Select gaadiwala' }, ...tList.map(t => ({ value: t.id, label: t.name })), { value: ADD, label: '＋ Add new gaadiwala' }]
-  const dOptions = [{ value: '', label: 'Select transport' }, ...dList.map(d => ({ value: d.id, label: d.name })), { value: ADD, label: '＋ Add new transport' }]
-
-  const onSelectTransporter = (e) => { const v = e.target.value; if (v === ADD) { setAdding({ type: 'transporter' }); setNewName('') } else setVehField('transporterId')(v) }
-  const onSelectDestination = (i) => (e) => { const v = e.target.value; if (v === ADD) { setAdding({ type: 'destination', i }); setNewName('') } else setDropField(i, 'destinationId')(v) }
+  const tItems = tList.map(t => ({ value: t.id, label: t.name }))
+  const dItems = dList.map(d => ({ value: d.id, label: d.name }))
 
   const setGaadi = (e) => setVehField('gaadiNumber')(e.target.value.replace(/\D/g, '').slice(0, 4))
 
-  const saveNewMaster = () => {
-    const name = newName.trim()
+  // Add-a-master-and-pick-it in one tap (fired by the Combobox "＋ Add …" row).
+  const addTransporter = (name) => {
     if (!name) return
-    if (adding.type === 'transporter') {
-      const row = transporters.insert({ name, active: true, runningBalance: 0, alertedLevel: 0, deleted: false })
-      setVehField('transporterId')(row.id)
-    } else {
-      const row = destinations.insert({ name, active: true, deleted: false })
-      setDropField(adding.i, 'destinationId')(row.id)
-    }
-    setAdding(null); setNewName('')
+    const row = transporters.insert({ name, active: true, runningBalance: 0, alertedLevel: 0, deleted: false })
+    setVehField('transporterId')(row.id)
+  }
+  const addDestination = (i, name) => {
+    if (!name) return
+    const row = destinations.insert({ name, active: true, deleted: false })
+    setDropField(i, 'destinationId')(row.id)
   }
 
   const addDrop = () => setDrops(ds => [...ds, emptyDrop()])
@@ -199,14 +191,8 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
           <div className="mt-1.5">
             {lockTransporterId ? (
               <div className="w-full border-2 border-slate-200 bg-slate-50 rounded-2xl px-4 py-4 text-base font-semibold text-slate-700">{lockTransporterName || '—'}</div>
-            ) : adding?.type === 'transporter' ? (
-              <div className="flex gap-2">
-                <TextInput autoFocus value={newName} placeholder="New gaadiwala name" onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveNewMaster()} />
-                <Button onClick={saveNewMaster}>Add</Button>
-                <Button variant="neutral" onClick={() => setAdding(null)}>✕</Button>
-              </div>
             ) : (
-              <Select options={tOptions} value={veh.transporterId} onChange={onSelectTransporter} />
+              <Combobox options={tItems} value={veh.transporterId} placeholder="Type to search gaadiwala…" addLabel="Add gaadiwala" onSelect={setVehField('transporterId')} onAddNew={addTransporter} />
             )}
           </div>
         </div>
@@ -226,15 +212,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
           </div>
 
           <div>
-            {adding?.type === 'destination' && adding.i === i ? (
-              <div className="flex gap-2">
-                <TextInput autoFocus value={newName} placeholder="New transport name" onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveNewMaster()} />
-                <Button onClick={saveNewMaster}>Add</Button>
-                <Button variant="neutral" onClick={() => setAdding(null)}>✕</Button>
-              </div>
-            ) : (
-              <Select options={dOptions} value={d.destinationId} onChange={onSelectDestination(i)} />
-            )}
+            <Combobox options={dItems} value={d.destinationId} placeholder="Type to search transport…" addLabel="Add transport" onSelect={setDropField(i, 'destinationId')} onAddNew={(name) => addDestination(i, name)} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
