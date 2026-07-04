@@ -13,13 +13,14 @@ import { levelStyle } from '../logic/balance'
 import { shareStatementPdf } from '../logic/pdf'
 import { auditLine } from '../logic/audit'
 import { canonicalSettlement, sha256hex } from '../logic/hash'
+import { makeId } from '../../../core/db/repository'
 import { THRESHOLD_LEVELS, PAID_BY, fmtChallan, fmtPayment } from '../config'
 import Entry from './Entry'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
 export default function Hisab({ owner = false, by = '' }) {
-  const { transporters, destinations, entries, advances, settlements, logs, log, allocateNumber } = useFreight()
+  const { transporters, destinations, entries, advances, settlements, logs, log, allocateNumber, settleBatch } = useFreight()
   const { msg, show } = useToast()
   const [tid, setTid] = useState('')
   const [editBatch, setEditBatch] = useState(null)
@@ -69,18 +70,22 @@ export default function Hisab({ owner = false, by = '' }) {
     setBusy(true)
     try {
       const to = todayStr()
-      // 1) record the settlement payment (if any) as an advance dated today
-      let payLine = null
-      if (pay > 0) {
-        const paymentNo = await allocateNumber('payment')
-        const rec = advances.insert({ date: to, transporterId: tid, transporterName: transporter.name, amount: pay, paidBy, note: payNote.trim() || 'settlement payment', paymentNo, reversal: false, reversed: false, factoryId: 'main', deleted: false, createdByUser: by || '' })
-        payLine = { id: rec.id, date: to, kind: 'advance', paidBy, note: rec.note, amount: pay, debit: 0, credit: pay, balance: closing }
-        log('advance.add', `${fmtPayment(paymentNo)} ${transporter.name} ₹${pay} by ${paidBy}`, by, tid)
-        logs.insert(auditLine('payment.add', { by, role: owner ? 'owner' : 'incharge', after: rec, device: navigator.userAgent }))
-      }
-      // 2) snapshot + lock the period (closing = what's still owed → carries forward)
+      const byName = by || (owner ? 'Owner' : 'Staff')
+      const roleName = owner ? 'owner' : 'incharge'
+      // Numbers come from their own atomic counter txns FIRST (before the batch).
+      const paymentNo = pay > 0 ? await allocateNumber('payment') : 0
       const settlementNo = await allocateNumber('settlement')
       const tripCount = lines.filter(l => l.kind === 'freight').length
+
+      // Build the settlement payment (if any) client-side so its id is fixed
+      // both in the ledger snapshot and in the atomic write.
+      let payment = null, payLine = null
+      if (pay > 0) {
+        const pid = makeId('r')
+        payment = { id: pid, date: to, transporterId: tid, transporterName: transporter.name, amount: pay, paidBy, note: payNote.trim() || 'settlement payment', paymentNo, reversal: false, reversed: false, factoryId: 'main', deleted: false, createdByUser: by || '' }
+        payLine = { id: pid, date: to, kind: 'advance', paidBy, note: payment.note, amount: pay, debit: 0, credit: pay, balance: closing }
+      }
+      // Snapshot + lock the period (closing = what's still owed → carries forward).
       const snapshot = {
         transporterId: tid, periodFrom: from, periodTo: to,
         totalFreight: totals.freight, totalPayments: totals.advances + pay, closingBalance: closing,
@@ -88,17 +93,26 @@ export default function Hisab({ owner = false, by = '' }) {
         lineIds: lines.filter(l => l.kind !== 'opening').map(l => l.id).concat(payLine ? [payLine.id] : []),
       }
       const settlementHash = await sha256hex(canonicalSettlement(snapshot)) // reproducible fingerprint
-      settlements.insert({
-        transporterId: tid, periodFrom: from, periodTo: to,
-        openingBalance: opening,
+      const settlement = {
+        id: makeId('r'), transporterId: tid, periodFrom: from, periodTo: to, openingBalance: opening,
         totalFreight: totals.freight, totalAdvances: totals.advances + pay, balance: closing,
-        finalizedBy: by || (owner ? 'Owner' : 'Staff'), locked: true, settlementNo,
-        settledAt: new Date().toISOString(), settledBy: by || (owner ? 'Owner' : 'Staff'),
+        finalizedBy: byName, locked: true, settlementNo,
+        settledAt: new Date().toISOString(), settledBy: byName,
         transporterName: transporter.name, tripCount, totalPayments: totals.advances + pay,
         closingBalance: closing, settlementHash, pdfHash: '', factoryId: 'main',
+      }
+
+      // ONE atomic write: payment + settlement + carried-forward running balance.
+      await settleBatch({
+        payment, settlement, transporterId: tid,
+        transporterPatch: { runningBalance: closing, alertedLevel: thresholdLevel(closing, THRESHOLD_LEVELS) },
       })
-      // 3) carry the remainder forward as the new running balance (not zero)
-      transporters.update(tid, { runningBalance: closing, alertedLevel: thresholdLevel(closing, THRESHOLD_LEVELS) })
+
+      // Non-critical after the money is safely committed (best-effort logs).
+      if (pay > 0) {
+        log('advance.add', `${fmtPayment(paymentNo)} ${transporter.name} ₹${pay} by ${paidBy}`, by, tid)
+        logs.insert(auditLine('payment.add', { by, role: roleName, after: payment, device: navigator.userAgent }))
+      }
       log('hisab.settle', `SET-${String(settlementNo).padStart(4, '0')} ${transporter.name} paid ₹${fmtNum(pay)} carry ₹${fmtNum(closing)}`, by, tid)
       setSettling(false)
       show(closing === 0 ? 'Settled & cleared ✓' : `Settled ✓ · ₹${fmtNum(closing)} carried forward`)

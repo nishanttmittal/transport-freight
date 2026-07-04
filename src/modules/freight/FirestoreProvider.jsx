@@ -113,6 +113,31 @@ async function commitBatchGuarded(docPathFn, { updates = [], inserts = [], softD
   })
 }
 
+/**
+ * Settle a hisab as ONE atomic write (all-or-nothing). Settling touches three
+ * collections — the settlement payment (advance), the locked settlement snapshot,
+ * and the transporter's carried-forward running balance. Done as separate writes,
+ * a mid-way network drop leaves a HALF-SETTLED state (money recorded but period
+ * not locked, or locked but Dashboard's cached balance stale). A writeBatch makes
+ * all three commit together or not at all. The payment/settlement NUMBERS are
+ * allocated by their own atomic counter txns BEFORE this call — a burned number on
+ * failure is just a harmless gap in the sequence.
+ */
+async function settleBatch({ payment = null, settlement, transporterId, transporterPatch }) {
+  const now = new Date().toISOString()
+  const b = writeBatch(db)
+  let paymentId = null
+  if (payment) {
+    paymentId = payment.id || makeId('r')
+    b.set(paths.advance(paymentId), { createdAt: now, updatedAt: now, ...payment, id: paymentId })
+  }
+  const settlementId = settlement.id || makeId('r')
+  b.set(paths.settlementDoc(settlementId), { createdAt: now, updatedAt: now, ...settlement, id: settlementId })
+  b.set(paths.transporter(transporterId), { ...transporterPatch, updatedAt: now }, { merge: true })
+  await b.commit()
+  return { paymentId, settlementId }
+}
+
 export function FirestoreProvider({ children }) {
   const [ready, setReady] = useState(false)
   const [timedOut, setTimedOut] = useState(false)
@@ -191,7 +216,7 @@ export function FirestoreProvider({ children }) {
       commitBatch: (spec) => commitBatchGuarded(paths.entry, spec),
     },
     advances, settlements, users, logs,
-    lastUsed: lastUsedStore, log, allocateNumber,
+    lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
     cloud: { connected: !error, error },
   }
   return (

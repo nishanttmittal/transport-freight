@@ -41,11 +41,20 @@ export function LocalFreightProvider({ children }) {
     return n
   }, [])
 
+  // Offline mode has no transactions — write sequentially (best-effort parity).
+  const settleBatch = useCallback(async ({ payment = null, settlement, transporterId, transporterPatch }) => {
+    let paymentId = null
+    if (payment) { const r = advances.insert(payment); paymentId = r.id }
+    const s = settlements.insert(settlement)
+    transporters.update(transporterId, transporterPatch)
+    return { paymentId, settlementId: s.id }
+  }, [advances, settlements, transporters])
+
   const value = {
     transporters, destinations,
     entries: { ...entries, updateGuarded: async (id, _rev, patch) => { entries.update(id, patch); return { ok: true } } },
     advances, settlements, users, logs,
-    lastUsed: lastUsedStore, log, allocateNumber,
+    lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
     cloud: { connected: false, error: '' },
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
