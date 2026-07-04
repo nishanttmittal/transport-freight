@@ -93,7 +93,7 @@ async function updateGuarded(docPathFn, id, expectedRevision, patch) {
  * moved on we abort with {ok:false,reason:'stale'} and write nothing. `inserts`
  * (new drops on an edit) and `softDeletes` (removed drops) ride the same txn.
  */
-async function commitBatchGuarded(docPathFn, { updates = [], inserts = [], softDeletes = [] }) {
+async function commitBatchGuarded(docPathFn, { updates = [], inserts = [], softDeletes = [], balance = null }) {
   return await runTransaction(db, async (tx) => {
     const now = new Date().toISOString()
     // Firestore requires all reads before any write.
@@ -109,6 +109,53 @@ async function commitBatchGuarded(docPathFn, { updates = [], inserts = [], softD
     }
     for (const ins of inserts) tx.set(docPathFn(ins.id), { createdAt: now, updatedAt: now, ...ins })
     for (const id of softDeletes) tx.set(docPathFn(id), { deleted: true, updatedAt: now }, { merge: true })
+    // The running-balance delta rides the SAME transaction (P1-2): a passed/
+    // edited/cancelled chakkar and its balance change commit together or not at
+    // all — never a financial record without its balance, or vice-versa.
+    if (balance && balance.transporterId && Number(balance.delta)) {
+      const patch = { runningBalance: increment(Number(balance.delta) || 0), updatedAt: now }
+      if (typeof balance.level === 'number') patch.alertedLevel = balance.level
+      tx.set(paths.transporter(balance.transporterId), patch, { merge: true })
+    }
+    return { ok: true }
+  })
+}
+
+/**
+ * Write an advance (or a reversal) AND the transporter's running-balance delta as
+ * ONE writeBatch (P1-2/P1-5) — the payment record and the balance change commit
+ * together or not at all. A deterministic reversal id (rev_<paymentNo>) makes a
+ * repeat/duplicate reversal idempotent (writes the same doc, never doubles).
+ */
+async function commitAdvanceAndBalance({ advance, transporterId, delta, level }) {
+  const now = new Date().toISOString()
+  const id = advance.id || makeId('r')
+  const b = writeBatch(db)
+  b.set(paths.advance(id), { createdAt: now, updatedAt: now, ...advance, id })
+  const patch = { runningBalance: increment(Number(delta) || 0), updatedAt: now }
+  if (typeof level === 'number') patch.alertedLevel = level
+  b.set(paths.transporter(transporterId), patch, { merge: true })
+  await b.commit()
+  return { id }
+}
+
+/**
+ * Reverse a payment as an idempotent transaction (P1-5). The reversal has a
+ * DETERMINISTIC id (rev_<paymentNo>). The txn first reads that id: if it already
+ * exists (double-tap, or two devices), it aborts WITHOUT incrementing — so the
+ * money can never be added back twice, even though the plain writeBatch increment
+ * is not idempotent on its own.
+ */
+async function commitReversalAndBalance({ reversal, transporterId, delta, level }) {
+  return await runTransaction(db, async (tx) => {
+    const ref = paths.advance(reversal.id)
+    const snap = await tx.get(ref)
+    if (snap.exists()) return { ok: false, reason: 'already' }
+    const now = new Date().toISOString()
+    tx.set(ref, { createdAt: now, updatedAt: now, ...reversal })
+    const patch = { runningBalance: increment(Number(delta) || 0), updatedAt: now }
+    if (typeof level === 'number') patch.alertedLevel = level
+    tx.set(paths.transporter(transporterId), patch, { merge: true })
     return { ok: true }
   })
 }
@@ -217,6 +264,8 @@ export function FirestoreProvider({ children }) {
     },
     advances, settlements, users, logs,
     lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
+    commitAdvance: commitAdvanceAndBalance,
+    commitReversal: commitReversalAndBalance,
     cloud: { connected: !error, error },
   }
   return (

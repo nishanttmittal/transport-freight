@@ -11,10 +11,10 @@ import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Combobox, 
 import { todayStr, fmtNum, fmtDate } from '../../../core/utils/format'
 import { makeId } from '../../../core/db/repository'
 import { useFreight } from '../FreightContext'
-import { entryTotal, lockedOn, nextChallanNo } from '../logic/calc'
+import { entryTotal, lockedOn, nextChallanNo, dropError } from '../logic/calc'
 import { findDuplicate } from '../logic/status'
 import { auditLine } from '../logic/audit'
-import { applyBalance } from '../logic/balance'
+import { balanceHint } from '../logic/balance'
 import { EXTRA_POINT_HINT, CHALLAN_START, fmtChallan } from '../config'
 
 const active = (list) => (list || []).filter(x => !x.deleted && x.active !== false)
@@ -72,6 +72,8 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
     if (!veh.transporterId) return show('Pick a gaadiwala', 2000)
     for (let i = 0; i < drops.length; i++) {
       if (!drops[i].destinationId) return show(`Pick transport for drop ${i + 1}`, 2200)
+      const err = dropError(drops[i]) // block negative charges / zero-total (P1-3)
+      if (err) return show(`Drop ${i + 1}: ${err}`, 2800)
     }
     if (!editing && lockedOn(settlements.list, veh.transporterId, veh.date)) return show('This period is settled & locked', 2600)
     if (busy) return
@@ -83,6 +85,8 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
       setBusy(true)
       try {
         const oldTotal = editBatch.reduce((s, r) => s + entryTotal(r), 0)
+        const newTotal = drops.reduce((s, dd) => s + entryTotal(dd), 0)
+        const delta = ownerEdit ? (newTotal - oldTotal) : 0 // gaadiwala resubmit → pending, no balance change
         const newStatus = ownerEdit ? 'passed' : 'pending'
         const batchChallan = editBatch[0].challanNo || 0
         // Build the whole edit (changed drops + removed drops + added drops) and
@@ -101,12 +105,10 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
             inserts.push({ id: makeId('r'), date: veh.date, status: newStatus, revision: 0, challanNo: ownerEdit ? batchChallan : 0, submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d), batchId: editBatch[0].batchId, createdByUser: by || '', sourceApp: 'transportfreight', workflowStage: 'transport', factoryId: 'main', deleted: false })
           }
         }
-        const res = await entries.commitBatch({ updates, inserts, softDeletes })
+        const balance = delta ? { transporterId: veh.transporterId, delta, level: balanceHint(transporters, veh.transporterId, delta).level } : null
+        const res = await entries.commitBatch({ updates, inserts, softDeletes, balance })
         if (!res.ok) { show('Refresh — changed by someone else', 2600); return }
         if (ownerEdit) {
-          const newTotal = drops.reduce((s, dd) => s + entryTotal(dd), 0)
-          const delta = newTotal - oldTotal
-          if (delta) applyBalance(transporters, veh.transporterId, delta)
           log('entry.edit', `${fmtChallan(batchChallan)} ${fmtDate(veh.date)} Δ₹${delta}`, by, editBatch[0].batchId)
           logs.insert(auditLine('entry.edit', { by, role: level, before: { total: oldTotal }, after: { total: newTotal }, device: navigator.userAgent }))
           show('Entry updated ✓', 2400)
@@ -143,7 +145,10 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         grand += entryTotal(rec)
         return rec
       })
-      await entries.commitBatch({ inserts })
+      // A passed (staff/owner) entry moves the balance in the SAME txn (P1-2);
+      // a pending (gaadiwala) submission doesn't touch the balance until passed.
+      const bh = pendingMode ? null : balanceHint(transporters, veh.transporterId, +grand)
+      await entries.commitBatch({ inserts, balance: bh ? { transporterId: veh.transporterId, delta: +grand, level: bh.level } : null })
       const n = drops.length
       lastUsed.set({ ...(lastUsed.get() || {}), gaadiNumber: veh.gaadiNumber })
       if (pendingMode) {
@@ -153,7 +158,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         setDrops([emptyDrop()])
         show(`Sent for approval ✓ · ${n} drop${n > 1 ? 's' : ''}`, 2600)
       } else {
-        const crossed = applyBalance(transporters, veh.transporterId, +grand)
+        const crossed = bh ? bh.crossed : null
         log('entry.add', `${fmtChallan(challan)} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
         logs.insert(auditLine('entry.add', { by, role: level, after: { challanNo: challan, total: grand, drops: n }, device: navigator.userAgent }))
         setVeh({ date: veh.date, transporterId: '', gaadiNumber: '' })

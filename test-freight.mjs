@@ -3,7 +3,7 @@
  * Run: node test-freight.mjs
  */
 import assert from 'node:assert'
-import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, openingBalance, latestSettlement, ledgerLines, nextChallanNo } from './src/modules/freight/logic/calc.js'
+import { entryTotal, transporterTotals, thresholdLevel, crossingAlert, lockedOn, unsettledFrom, openingBalance, latestSettlement, ledgerLines, nextChallanNo, dropError, transporterDeleteBlock } from './src/modules/freight/logic/calc.js'
 import { countsInHisab, applyTransition, isStale, findDuplicate, makeReversal } from './src/modules/freight/logic/status.js'
 import { nextFromCounters } from './src/modules/freight/logic/counters.js'
 import { auditLine } from './src/modules/freight/logic/audit.js'
@@ -172,5 +172,22 @@ assert.equal(noInc.p.runningBalance, 1500, 'fallback writes prev+delta')
   // fully-paid settle (closing 0) carries nothing
   assert.equal(openingBalance([{ transporterId: 't9', locked: true, periodTo: '2026-07-04', closingBalance: 0 }], 't9'), 0)
 }
+
+// dropError (P1-3): block negative charges/bags and zero-total drops
+assert.equal(dropError({ freight: 500 }), '', 'a positive drop is valid')
+assert.equal(dropError({ freight: 100, lrCharge: 50, unloading: 20, bags: 3 }), '', 'multi-charge positive drop is valid')
+assert.equal(dropError({ freight: -500 }), 'Amounts cannot be negative', 'negative freight blocked')
+assert.equal(dropError({ freight: 100, extraPoint: -50 }), 'Amounts cannot be negative', 'negative extra point blocked')
+assert.equal(dropError({ freight: 100, bags: -1 }), 'Amounts cannot be negative', 'negative bags blocked')
+assert.ok(dropError({ freight: 0, lrCharge: 0 }).includes('more than ₹0'), 'zero-total drop blocked')
+assert.ok(dropError({}).includes('more than ₹0'), 'empty drop blocked')
+assert.equal(dropError({ freight: 0, lrCharge: 50 }), '', 'freight 0 but a positive charge is OK (>0 total)')
+
+// transporterDeleteBlock (P1-4): protect a gaadiwala with balance or history
+assert.equal(transporterDeleteBlock({ runningBalance: 0, hasEntries: false }), '', 'clean gaadiwala can be removed')
+assert.equal(transporterDeleteBlock({ runningBalance: 4557, hasEntries: false }), 'has an open balance', 'open balance blocks delete')
+assert.equal(transporterDeleteBlock({ runningBalance: -100, hasEntries: false }), 'has an open balance', 'negative (advance) balance blocks delete')
+assert.equal(transporterDeleteBlock({ runningBalance: 0, hasEntries: true }), 'has trip history', 'trip history blocks delete')
+assert.equal(transporterDeleteBlock({}), '', 'defaults = removable')
 
 console.log('ALL FREIGHT CALC TESTS PASSED')

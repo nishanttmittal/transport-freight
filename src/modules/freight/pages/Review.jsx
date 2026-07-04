@@ -8,10 +8,10 @@ import { useState } from 'react'
 import { Card, Button, useToast, Toast } from '../../../core/ui'
 import { fmtNum, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
-import { entryTotal, lockedOn } from '../logic/calc'
+import { entryTotal, lockedOn, dropError } from '../logic/calc'
 import { applyTransition, STATUS } from '../logic/status'
 import { auditLine } from '../logic/audit'
-import { applyBalance } from '../logic/balance'
+import { balanceHint } from '../logic/balance'
 import { fmtChallan } from '../config'
 
 /** Group rows by batchId into chakkar objects. */
@@ -57,23 +57,26 @@ export default function Review({ owner = false, by = '', level = '' }) {
   // Apply an action to a WHOLE batch in ONE atomic transaction (P1.3) — every
   // row moves together or none does. Revision-guarded, so returns false if any
   // row was changed by someone else in the meantime.
-  const applyBatch = async (batch, action, ctx) => {
+  const applyBatch = async (batch, action, ctx, balance = null) => {
     const updates = batch.rows.map(row => {
       const t = applyTransition(row, action, ctx)
       return { id: row.id, expectedRevision: row.revision, patch: { status: t.status, challanNo: t.challanNo, approvedBy: t.approvedBy || '', approvedAt: t.approvedAt || '', voidReason: t.voidReason || '', correctionReason: t.correctionReason || '', cancelReason: t.cancelReason || '' } }
     })
-    const res = await entries.commitBatch({ updates })
+    const res = await entries.commitBatch({ updates, balance })
     return res.ok
   }
 
   const doPass = async (batch) => {
     if (busy) return
+    // Never pass a chakkar carrying a negative/zero-value drop (P1-3) — it would
+    // corrupt the hisab. Send it back for correction instead.
+    if (batch.rows.some(r => dropError(r))) return show('This chakkar has an invalid amount — Return it for correction', 3000)
     setBusy(true)
     try {
       const challan = await allocateNumber('challan')
-      const ok = await applyBatch(batch, 'pass', { by, role: level, challanNo: challan })
+      const bal = { transporterId: batch.transporterId, delta: +batch.total, level: balanceHint(transporters, batch.transporterId, +batch.total).level }
+      const ok = await applyBatch(batch, 'pass', { by, role: level, challanNo: challan }, bal)
       if (!ok) return show('Refresh — this was just changed by someone else', 2600)
-      applyBalance(transporters, batch.transporterId, +batch.total)
       log('entry.pass', `${fmtChallan(challan)} ${tName(batch.transporterId, batch.transporterName)} ₹${batch.total}`, by, batch.batchId)
       audit({ action: 'entry.pass', by, role: level, after: { challanNo: challan, total: batch.total } })
       show(`Passed ${fmtChallan(challan)} ✓`)
@@ -86,9 +89,9 @@ export default function Review({ owner = false, by = '', level = '' }) {
     if (busy) return
     setBusy(true)
     try {
-      const ok = await applyBatch(batch, action, { by, role: level, reason: reason.trim() })
+      const bal = action === 'cancel' ? { transporterId: batch.transporterId, delta: -batch.total, level: balanceHint(transporters, batch.transporterId, -batch.total).level } : null
+      const ok = await applyBatch(batch, action, { by, role: level, reason: reason.trim() }, bal)
       if (!ok) return show('Refresh — this was just changed by someone else', 2600)
-      if (action === 'cancel') applyBalance(transporters, batch.transporterId, -batch.total)
       log(`entry.${action}`, `${tName(batch.transporterId, batch.transporterName)} ₹${batch.total} — ${reason.trim()}`, by, batch.batchId)
       audit({ action: `entry.${action}`, by, role: level, reason: reason.trim(), before: { challanNo: batch.challanNo, total: batch.total } })
       show(`${verb} ✓`)

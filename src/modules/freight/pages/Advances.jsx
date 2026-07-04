@@ -10,13 +10,13 @@ import { useFreight } from '../FreightContext'
 import { lockedOn } from '../logic/calc'
 import { makeReversal } from '../logic/status'
 import { auditLine } from '../logic/audit'
-import { applyBalance } from '../logic/balance'
+import { balanceHint } from '../logic/balance'
 import { PAID_BY, fmtPayment } from '../config'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
 export default function Advances({ owner = false, by = '', level = '' }) {
-  const { transporters, advances, settlements, logs, log, allocateNumber } = useFreight()
+  const { transporters, advances, settlements, logs, log, allocateNumber, commitAdvance, commitReversal } = useFreight()
   const { msg, show } = useToast()
   const [form, setForm] = useState({ date: todayStr(), transporterId: '', amount: '', paidBy: PAID_BY[0], note: '' })
   const [busy, setBusy] = useState(false)
@@ -36,8 +36,9 @@ export default function Advances({ owner = false, by = '', level = '' }) {
     try {
       const paymentNo = await allocateNumber('payment')
       const rec = { date: form.date, transporterId: form.transporterId, transporterName: tName(form.transporterId), amount: amt, paidBy: form.paidBy, note: form.note.trim(), paymentNo, reversal: false, reversed: false, factoryId: 'main', deleted: false, createdByUser: by || '' }
-      advances.insert(rec)
-      applyBalance(transporters, form.transporterId, -amt)
+      // Payment record + balance decrement as ONE batch (P1-2) — never one without the other.
+      const { level: lvl } = balanceHint(transporters, form.transporterId, -amt)
+      await commitAdvance({ advance: rec, transporterId: form.transporterId, delta: -amt, level: lvl })
       log('advance.add', `${fmtPayment(paymentNo)} ${tName(form.transporterId)} ₹${amt} by ${form.paidBy}`, by, form.transporterId)
       audit({ action: 'payment.add', by, role: level, after: rec })
       setForm(f => ({ ...f, amount: '', note: '' }))
@@ -46,16 +47,25 @@ export default function Advances({ owner = false, by = '', level = '' }) {
   }
 
   // Reversal = a NEW reversing payment (negative). The original is never edited.
-  const reverse = (a) => {
+  // Deterministic id (rev_<paymentNo>) + busy lock make a double-tap / two-device
+  // reversal idempotent — it can never add the money back twice (P1-5). Record +
+  // balance ride one batch (P1-2).
+  const reverse = async (a) => {
+    if (busy) return
     if (active(advances.list).some(x => x.reversal && Number(x.reversesPaymentNo) === Number(a.paymentNo))) return show('Already reversed', 2200)
     if (lockedOn(settlements.list, a.transporterId, a.date)) return show('Settled — cannot reverse', 2600)
     if (!window.confirm(`Reverse ₹${fmtNum(a.amount)} advance (${fmtPayment(a.paymentNo)}) to ${tName(a.transporterId)}?`)) return
-    const rev = { ...makeReversal(a, by), transporterName: tName(a.transporterId), factoryId: 'main' }
-    advances.insert(rev)
-    applyBalance(transporters, a.transporterId, +(Number(a.amount) || 0))
-    log('advance.reverse', `${tName(a.transporterId)} ₹${a.amount} (${fmtPayment(a.paymentNo)})`, by, a.transporterId)
-    audit({ action: 'payment.reverse', by, role: level, before: a, after: rev })
-    show('Reversed')
+    setBusy(true)
+    try {
+      const amt = Number(a.amount) || 0
+      const rev = { ...makeReversal(a, by), id: `rev_${Number(a.paymentNo) || a.id}`, transporterName: tName(a.transporterId), factoryId: 'main' }
+      const { level: lvl } = balanceHint(transporters, a.transporterId, +amt)
+      const res = await commitReversal({ reversal: rev, transporterId: a.transporterId, delta: +amt, level: lvl })
+      if (res && res.ok === false) return show('Already reversed', 2200)
+      log('advance.reverse', `${tName(a.transporterId)} ₹${a.amount} (${fmtPayment(a.paymentNo)})`, by, a.transporterId)
+      audit({ action: 'payment.reverse', by, role: level, before: a, after: rev })
+      show('Reversed')
+    } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 
   const recent = active(advances.list).slice().sort((x, y) => (y.date || '').localeCompare(x.date || '') || (y.createdAt || '').localeCompare(x.createdAt || '')).slice(0, 30)
@@ -97,7 +107,7 @@ export default function Advances({ owner = false, by = '', level = '' }) {
                   <div className="text-xs text-slate-400">{fmtPayment(a.paymentNo) ? fmtPayment(a.paymentNo) + ' · ' : ''}{fmtDate(a.date)} · {a.paidBy}{a.note ? ' · ' + a.note : ''}</div>
                 </div>
                 <div className={`text-sm font-bold font-mono ${isRev ? 'text-slate-400' : 'text-emerald-600'}`}>{isRev ? '−' : ''}₹{fmtNum(Math.abs(Number(a.amount) || 0))}</div>
-                {owner && !isRev && !alreadyReversed && <button onClick={() => reverse(a)} className="text-xs font-bold text-red-500 bg-red-50 rounded-lg px-2.5 py-1.5">Reverse</button>}
+                {owner && !isRev && !alreadyReversed && <button onClick={() => reverse(a)} disabled={busy} className="text-xs font-bold text-red-500 bg-red-50 rounded-lg px-2.5 py-1.5 disabled:opacity-50">Reverse</button>}
               </div>
             )})}
           </div>

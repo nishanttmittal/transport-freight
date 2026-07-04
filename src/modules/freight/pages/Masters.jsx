@@ -8,10 +8,11 @@
 import { useState } from 'react'
 import { Button, Card, TextInput, useToast, Toast } from '../../../core/ui'
 import { useFreight } from '../FreightContext'
+import { transporterDeleteBlock } from '../logic/calc'
 
 const active = (list) => (list || []).filter(x => !x.deleted)
 
-function MasterList({ title, repo, withPhone, withLogin, owner, users }) {
+function MasterList({ title, repo, withPhone, withLogin, owner, users, deleteOwnerOnly = false, deleteGuard = null }) {
   const { msg, show } = useToast()
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -25,7 +26,14 @@ function MasterList({ title, repo, withPhone, withLogin, owner, users }) {
     setName(''); setPhone(''); show('Added ✓')
   }
   const saveEdit = (id) => { if (editName.trim()) repo.update(id, { name: editName.trim() }); setEditId('') }
-  const softDelete = (id, n) => { if (window.confirm(`Remove ${n}? (history is kept)`)) repo.update(id, { deleted: true }) }
+  const softDelete = (r) => {
+    const g = deleteGuard ? deleteGuard(r) : {}
+    // Never remove a gaadiwala who still has money owed or trip history — it
+    // would hide a live payable from the dashboard (P1-4).
+    if (g.blocked) return show(`Can’t remove ${r.name} — ${g.blocked}. It stays so the hisab is correct.`, 3600)
+    const warn = g.warn ? `\n\n⚠️ ${g.warn}` : ''
+    if (window.confirm(`Remove ${r.name}? (history is kept)${warn}`)) repo.update(r.id, { deleted: true })
+  }
 
   // Login helpers (owner only) — the linked login for a gaadiwala is a users doc.
   const loginFor = (r) => (users?.list || []).find(u => !u.deleted && u.active !== false && u.role === 'gaadiwala' && u.transporterId === r.id)
@@ -70,7 +78,7 @@ function MasterList({ title, repo, withPhone, withLogin, owner, users }) {
                   <>
                     <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{r.name}</div>{r.phone && <div className="text-xs text-slate-400">{r.phone}</div>}</div>
                     <button onClick={() => { setEditId(r.id); setEditName(r.name) }} className="text-xs font-bold text-slate-500 bg-slate-100 rounded-lg px-2.5 py-1.5">Edit</button>
-                    <button onClick={() => softDelete(r.id, r.name)} className="text-xs font-bold text-red-500 bg-red-50 rounded-lg px-2.5 py-1.5">Remove</button>
+                    {(!deleteOwnerOnly || owner) && <button onClick={() => softDelete(r)} className="text-xs font-bold text-red-500 bg-red-50 rounded-lg px-2.5 py-1.5">Remove</button>}
                   </>
                 )}
               </div>
@@ -91,11 +99,14 @@ function MasterList({ title, repo, withPhone, withLogin, owner, users }) {
 }
 
 export default function Masters({ owner = false }) {
-  const { transporters, destinations, users } = useFreight()
+  const { transporters, destinations, entries, users } = useFreight()
+  const hasEntriesFor = (field, id) => (entries.list || []).some(e => !e.deleted && e[field] === id)
+  const gaadiwalaGuard = (r) => ({ blocked: transporterDeleteBlock({ runningBalance: r.runningBalance, hasEntries: hasEntriesFor('transporterId', r.id) }) })
+  const destinationGuard = (r) => ({ warn: hasEntriesFor('destinationId', r.id) ? 'This transport is used in existing trips.' : '' })
   return (
     <div className="max-w-lg mx-auto p-4 space-y-4">
-      <MasterList title="Gaadiwalas" repo={transporters} withPhone withLogin owner={owner} users={users} />
-      <MasterList title="Destinations" repo={destinations} />
+      <MasterList title="Gaadiwalas" repo={transporters} withPhone withLogin owner={owner} users={users} deleteOwnerOnly deleteGuard={gaadiwalaGuard} />
+      <MasterList title="Destinations" repo={destinations} deleteGuard={destinationGuard} />
       {!owner && <p className="text-center text-[11px] text-slate-400">Giving a gaadiwala an app login is owner-only.</p>}
     </div>
   )

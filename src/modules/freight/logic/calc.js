@@ -68,6 +68,33 @@ export function transporterTotals(entries, advances, transporterId, opts = {}) {
   return { freight, advances: adv, opening, balance: opening + freight - adv }
 }
 
+/**
+ * Validate one drop's money fields before it can be saved/passed. Returns an
+ * error string, or '' when OK. Blocks negative charges/bags (a negative "freight"
+ * would silently REDUCE what we owe the gaadiwala) and a zero-total drop (a
+ * meaningless record). Money integrity: a passed chakkar must add a positive
+ * amount to the hisab.
+ */
+export function dropError(d) {
+  for (const f of ['freight', 'lrCharge', 'unloading', 'misc', 'extraPoint', 'bags']) {
+    if (num(d && d[f]) < 0) return 'Amounts cannot be negative'
+  }
+  if (entryTotal(d) <= 0) return 'Enter an amount — total must be more than ₹0'
+  return ''
+}
+
+/**
+ * Reason a gaadiwala CANNOT be removed (soft-deleted), or '' if safe to remove.
+ * Removing one who still has an open balance or trip history would hide a live
+ * payable from the dashboard. Such a gaadiwala should be set inactive (hidden
+ * from new entry) — never deleted.
+ */
+export function transporterDeleteBlock({ runningBalance = 0, hasEntries = false } = {}) {
+  if (num(runningBalance) !== 0) return 'has an open balance'
+  if (hasEntries) return 'has trip history'
+  return ''
+}
+
 /** Highest threshold level the balance has crossed (0 if below the first). */
 export function thresholdLevel(balance, levels) {
   let hit = 0

@@ -33,6 +33,19 @@ export function applyBalance(transporters, transporterId, delta) {
   return crossed
 }
 
+/**
+ * Compute the alert `level` and any newly-`crossed` threshold for a balance
+ * delta, WITHOUT writing anything. Used so the running-balance update can ride
+ * the SAME atomic transaction as the financial record (P1-2), while the caller
+ * still gets the level to store and a crossed-level for a one-time toast.
+ */
+export function balanceHint(transporters, transporterId, delta) {
+  const t = (transporters.list || []).find(x => x.id === transporterId)
+  const prev = num(t && t.runningBalance)
+  const next = prev + num(delta)
+  return { level: thresholdLevel(next, THRESHOLD_LEVELS), crossed: crossingAlert(prev, next, THRESHOLD_LEVELS) }
+}
+
 /** Recompute a transporter's UNSETTLED balance from raw data (safety net).
  *  Includes any brought-forward balance from the last settlement so a
  *  Recalculate never wipes a carried-forward remainder. */

@@ -50,11 +50,37 @@ export function LocalFreightProvider({ children }) {
     return { paymentId, settlementId: s.id }
   }, [advances, settlements, transporters])
 
+  // Best-effort offline parity for the atomic cloud helpers (no transactions
+  // on-device, so we just apply sequentially). Only used in ?local=1 dev mode.
+  const applyLocalBalance = (b) => {
+    if (!b || !b.transporterId || !Number(b.delta)) return
+    const t = (transporters.list || []).find(x => x.id === b.transporterId)
+    transporters.update(b.transporterId, { runningBalance: (Number(t && t.runningBalance) || 0) + Number(b.delta), alertedLevel: b.level })
+  }
+  const commitBatch = async ({ updates = [], inserts = [], softDeletes = [], balance = null }) => {
+    updates.forEach(u => entries.update(u.id, u.patch))
+    inserts.forEach(ins => entries.insert(ins))
+    softDeletes.forEach(id => entries.update(id, { deleted: true }))
+    applyLocalBalance(balance)
+    return { ok: true }
+  }
+  const commitAdvance = async ({ advance, transporterId, delta, level }) => {
+    const row = advances.insert(advance)
+    applyLocalBalance({ transporterId, delta, level })
+    return { id: row.id }
+  }
+  const commitReversal = async ({ reversal, transporterId, delta, level }) => {
+    if ((advances.list || []).some(x => x.id === reversal.id)) return { ok: false, reason: 'already' }
+    advances.insert(reversal)
+    applyLocalBalance({ transporterId, delta, level })
+    return { ok: true }
+  }
+
   const value = {
     transporters, destinations,
-    entries: { ...entries, updateGuarded: async (id, _rev, patch) => { entries.update(id, patch); return { ok: true } } },
+    entries: { ...entries, updateGuarded: async (id, _rev, patch) => { entries.update(id, patch); return { ok: true } }, commitBatch },
     advances, settlements, users, logs,
-    lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
+    lastUsed: lastUsedStore, log, allocateNumber, settleBatch, commitAdvance, commitReversal,
     cloud: { connected: false, error: '' },
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
