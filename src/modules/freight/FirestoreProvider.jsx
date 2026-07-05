@@ -19,10 +19,13 @@ import { FreightCtx } from './FreightContext'
 // Google). Tolerates permission-denied by leaving the collection empty.
 // `scope` ({field,value}) narrows the listen to a where() query — used so a
 // gaadiwala reads ONLY his own transporterId (required once rules restrict him).
-function useCloudCollection(collPath, docPath, normalize, authKey, scope = null, onError = () => {}) {
+function useCloudCollection(collPath, docPath, normalize, authKey, scope = null, onError = () => {}, enabled = true) {
   const [list, setList] = useState([])
   const scopeVal = scope ? scope.value : ''
   useEffect(() => {
+    // `enabled=false` = don't even attempt the read (used to gate the whole
+    // `users` collection to managers, so a gaadiwala never hits a denied read).
+    if (!enabled) { setList([]); return } // eslint-disable-line react-hooks/set-state-in-effect
     const src = scope ? query(collPath(), where(scope.field, '==', scope.value)) : collPath()
     const unsub = onSnapshot(
       src,
@@ -30,7 +33,7 @@ function useCloudCollection(collPath, docPath, normalize, authKey, scope = null,
       () => setList([])
     )
     return unsub
-  }, [authKey, scopeVal]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authKey, scopeVal, enabled]) // eslint-disable-line react-hooks/exhaustive-deps
   // every write is wrapped so a permission-denied / offline failure surfaces a
   // banner instead of a silent "saved" (P1.6). insert() still returns the row
   // synchronously (id is client-made) AND returns the promise on `.saved` so a
@@ -52,6 +55,25 @@ function useCloudCollection(collPath, docPath, normalize, authKey, scope = null,
     },
     reset: async () => { const ex = await getDocs(collPath()); const b = writeBatch(db); ex.forEach(d => b.delete(d.ref)); await b.commit() },
   }
+}
+
+/**
+ * Subscribe to a SINGLE document (or nothing when docPathFn is null). Used to
+ * read the signed-in user's OWN users/{email} doc for role resolution, so we
+ * don't need to read the whole users collection (P1-1 — access-list privacy).
+ */
+function useCloudDoc(docPathFn, normalize, authKey) {
+  const [data, setData] = useState(null)
+  useEffect(() => {
+    if (!docPathFn) { setData(null); return } // eslint-disable-line react-hooks/set-state-in-effect
+    const unsub = onSnapshot(
+      docPathFn(),
+      (snap) => setData(snap.exists() ? normalize({ id: snap.id, ...snap.data() }) : null),
+      () => setData(null)
+    )
+    return unsub
+  }, [authKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  return data
 }
 
 const normTransporter = makeNormalizer(transporterSchema)
@@ -200,19 +222,24 @@ export function FirestoreProvider({ children }) {
     setAuthEmail(u && !u.isAnonymous ? (u.email || '').toLowerCase() : '')
   }), [])
 
-  // masters + users load whole-collection (readable by any Google-signed-in
-  // user; anonymous baseline is denied — see rules nonAnon()).
   const transporters = useCloudCollection(paths.transporters, paths.transporter, normTransporter, authKey, null, reportWriteError)
   const destinations = useCloudCollection(paths.destinations, paths.destination, normDestination, authKey, null, reportWriteError)
-  const users        = useCloudCollection(paths.users, paths.user, normUser, authKey, null, reportWriteError)
   const logs         = useCloudCollection(paths.logs, paths.logDoc, (r) => r, authKey, null, reportWriteError)
 
-  // If the signed-in user is a gaadiwala, scope his trip/payment/settlement reads
-  // to his own transporterId (matches the restrictive rules; whole-collection
-  // reads would be denied for him). Owner/manager keep whole-collection.
-  const me = users.list.find(u => (u.email || '').toLowerCase() === authEmail)
+  // Role resolution reads the signed-in user's OWN users/{email} doc only (P1-1)
+  // — the access list is no longer whole-collection-readable by every account.
+  const myUser = useCloudDoc(authEmail ? () => paths.user(authEmail) : null, normUser, authKey)
   const isBootstrapOwner = OWNER_EMAILS.map(x => x.toLowerCase()).includes(authEmail)
-  const gTid = (me && me.role === 'gaadiwala' && me.active !== false && !isBootstrapOwner) ? (me.transporterId || '') : ''
+  const amManager = isBootstrapOwner || !!(myUser && (myUser.role === 'owner' || myUser.role === 'manager') && myUser.active !== false)
+  // Only managers/owner load the WHOLE users list (for Admin / login management);
+  // a gaadiwala sees just his own doc, so he never attempts a denied read.
+  const usersCol = useCloudCollection(paths.users, paths.user, normUser, authKey, null, reportWriteError, amManager)
+  const users = { ...usersCol, list: amManager ? usersCol.list : (myUser ? [myUser] : []) }
+
+  // If the signed-in user is a gaadiwala, scope his trip/payment/settlement reads
+  // to his own transporterId (matches the restrictive rules). Owner/manager keep
+  // whole-collection.
+  const gTid = (myUser && myUser.role === 'gaadiwala' && myUser.active !== false && !isBootstrapOwner) ? (myUser.transporterId || '') : ''
   const scope = gTid ? { field: 'transporterId', value: gTid } : null
 
   const entries      = useCloudCollection(paths.entries, paths.entry, normEntry, authKey, scope, reportWriteError)
