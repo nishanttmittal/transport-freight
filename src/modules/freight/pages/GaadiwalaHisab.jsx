@@ -63,10 +63,12 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
   const passed = byStatus(STATUS.passed)
   const cancelled = byStatus(STATUS.cancelled)
 
-  const withdraw = (b) => {
+  const withdraw = async (b) => {
     if (!window.confirm('Remove this trip? (only allowed before approval)')) return
-    b.rows.forEach(r => entries.update(r.id, { deleted: true }))
-    show('Removed')
+    // Remove ALL drops of the chakkar in ONE atomic batch (P2-5) — never leave
+    // some drops of a trip removed and others not.
+    const res = await entries.commitBatch({ softDeletes: b.rows.map(r => r.id) })
+    show(res && res.ok === false ? 'Could not remove — check internet and try again' : 'Removed')
   }
 
   return (

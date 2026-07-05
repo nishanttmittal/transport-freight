@@ -8,6 +8,7 @@ import { Card } from '../../../core/ui'
 import { fmtNum, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { entryTotal, transporterTotals, unsettledFrom, openingBalance, thresholdLevel } from '../logic/calc'
+import { countsInHisab } from '../logic/status'
 import { levelStyle } from '../logic/balance'
 import ThresholdBanner, { balanceOf } from '../ThresholdBanner'
 import { THRESHOLD_LEVELS } from '../config'
@@ -22,7 +23,8 @@ export default function Dashboard() {
   const tList = active(transporters.list)
 
   const today = todayStr()
-  const todayFreight = active(entries.list).filter(e => e.date === today).reduce((s, e) => s + entryTotal(e), 0)
+  // Only PASSED trips count as real freight — exclude pending/cancelled/voided (P2-3).
+  const todayFreight = (entries.list || []).filter(e => e.date === today && countsInHisab(e)).reduce((s, e) => s + entryTotal(e), 0)
   const rows = tList
     .map(t => ({ t, bal: balanceOf(t, state) }))
     .sort((a, b) => b.bal - a.bal)

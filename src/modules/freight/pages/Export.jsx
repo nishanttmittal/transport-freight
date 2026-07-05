@@ -3,28 +3,43 @@
  * WhatsApp). Owner tool.
  */
 import { useState } from 'react'
-import { Button, Card, FieldLabel, DateInput, useToast, Toast } from '../../../core/ui'
+import { Button, Card, FieldLabel, DateInput, Select, useToast, Toast } from '../../../core/ui'
 import { todayStr, daysAgoStr, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { entryTotal } from '../logic/calc'
 import { fmtChallan } from '../config'
 
 const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
+const STATUS_FILTERS = [
+  { value: 'passed', label: 'Passed only (recommended)' },
+  { value: 'pending', label: 'Pending only' },
+  { value: 'cancelled', label: 'Cancelled / voided' },
+  { value: 'all', label: 'All statuses' },
+]
 
 export default function Export() {
   const { transporters, destinations, entries } = useFreight()
   const { msg, show } = useToast()
   const [from, setFrom] = useState(daysAgoStr(30))
   const [to, setTo] = useState(todayStr())
+  const [statusFilter, setStatusFilter] = useState('passed')
 
   const tName = (id) => transporters.list.find(t => t.id === id)?.name || ''
   const dName = (id) => destinations.list.find(d => d.id === id)?.name || ''
 
+  const matchesStatus = (e) => {
+    const s = e.status || 'passed'
+    if (statusFilter === 'all') return true
+    if (statusFilter === 'cancelled') return s === 'cancelled' || s === 'voided'
+    if (statusFilter === 'pending') return s === 'pending' || s === 'needs_correction'
+    return s === 'passed'
+  }
+
   const download = () => {
-    const rows = (entries.list || []).filter(e => !e.deleted && (e.date || '') >= from && (e.date || '') <= to)
+    const rows = (entries.list || []).filter(e => !e.deleted && (e.date || '') >= from && (e.date || '') <= to && matchesStatus(e))
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-    const header = ['Challan', 'Date', 'Gaadiwala', 'Gaadi No', 'Transport', 'Bags', 'Pvt Marka', 'Freight', 'Bilti', 'Labour', 'Misc', 'Extra Point', 'Total', 'Remarks']
-    const body = rows.map(e => [fmtChallan(e.challanNo), fmtDate(e.date), tName(e.transporterId), e.gaadiNumber, dName(e.destinationId), e.bags, e.pvtMarka, e.freight, e.lrCharge, e.unloading, e.misc, e.extraPoint, entryTotal(e), e.remarks])
+    const header = ['Challan', 'Date', 'Status', 'Gaadiwala', 'Gaadi No', 'Transport', 'Bags', 'Pvt Marka', 'Freight', 'Bilti', 'Labour', 'Misc', 'Extra Point', 'Total', 'Remarks']
+    const body = rows.map(e => [fmtChallan(e.challanNo), fmtDate(e.date), e.status || 'passed', tName(e.transporterId), e.gaadiNumber, dName(e.destinationId), e.bags, e.pvtMarka, e.freight, e.lrCharge, e.unloading, e.misc, e.extraPoint, entryTotal(e), e.remarks])
     const csv = [header, ...body].map(r => r.map(csvCell).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -42,6 +57,7 @@ export default function Export() {
           <div><FieldLabel>From</FieldLabel><div className="mt-1.5"><DateInput value={from} onChange={e => setFrom(e.target.value)} /></div></div>
           <div><FieldLabel>To</FieldLabel><div className="mt-1.5"><DateInput value={to} onChange={e => setTo(e.target.value)} /></div></div>
         </div>
+        <div><FieldLabel>Status</FieldLabel><div className="mt-1.5"><Select options={STATUS_FILTERS} value={statusFilter} onChange={e => setStatusFilter(e.target.value)} /></div></div>
         <Button variant="success" className="w-full" onClick={download}>⬇ Download CSV</Button>
       </Card>
     </div>
