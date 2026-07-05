@@ -56,6 +56,7 @@ export default function Dashboard() {
           const from = unsettledFrom(settlements.list, t.id)
           const opening = openingBalance(settlements.list, t.id)   // include carried-forward remainder
           const tot = transporterTotals(entries.list, advances.list, t.id, { from, opening })
+          const runningTotal = tot.opening + tot.freight  // running hisab total (excl. settled), incl. carry-forward
           const isOpen = openId === t.id
           return (
             <Card key={t.id} className={`p-4 ${level > 0 ? 'ring-1 ' + s.ring : ''}`}>
@@ -69,6 +70,11 @@ export default function Dashboard() {
                   <span className="text-lg font-bold font-mono text-slate-800">₹{fmtNum(bal)}</span>
                 </div>
               </button>
+              {/* Running hisab only (settled history excluded): total billed + total paid. */}
+              <div className="mt-1.5 flex items-center gap-4 text-xs text-slate-500">
+                <span>Total <span className="font-bold text-slate-700 font-mono">₹{fmtNum(runningTotal)}</span></span>
+                <span>Paid <span className="font-bold text-emerald-600 font-mono">₹{fmtNum(tot.advances)}</span></span>
+              </div>
               {isOpen && (
                 <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-3 gap-2 text-center text-sm">
                   <div><div className="text-slate-400 text-xs">Freight</div><div className="font-bold">₹{fmtNum(tot.freight)}</div></div>
