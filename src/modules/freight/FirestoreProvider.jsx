@@ -12,8 +12,15 @@ import { transporterSchema, destinationSchema, entrySchema, advanceSchema, settl
 import { OWNER_EMAILS } from './config'
 import { nextFromCounters, COUNTER_START } from './logic/counters'
 import { isStale } from './logic/status'
+import { commitOnceTx } from './logic/idempotent'
+import { outboxList, outboxEnqueue, outboxUpdate, outboxRemove } from './logic/outbox'
 import { lastUsedStore } from './data'
 import { FreightCtx } from './FreightContext'
+import PendingUploadBanner from './PendingUploadBanner'
+
+// ids currently being uploaded — stops the foreground save and the background
+// sync from processing the same item at once (which would burn a reference number).
+const inFlight = new Set()
 
 // authKey re-subscribes the listener when the signed-in user changes (anon →
 // Google). Tolerates permission-denied by leaving the collection empty.
@@ -207,6 +214,28 @@ async function settleBatch({ payment = null, settlement, transporterId, transpor
   return { paymentId, settlementId }
 }
 
+/** Upload a whole chakkar idempotently (guard = its first row id). */
+async function commitChakkarOnce({ inserts, balance }) {
+  return await runTransaction(db, (tx) => commitOnceTx(tx, {
+    guardRef: paths.entry(inserts[0].id),
+    docs: inserts.map(r => ({ ref: paths.entry(r.id), data: r })),
+    balance: (balance && balance.transporterId)
+      ? { ref: paths.transporter(balance.transporterId), delta: balance.delta, level: balance.level }
+      : null,
+    increment,
+  }))
+}
+
+/** Upload an advance idempotently (guard = the advance id). */
+async function commitAdvanceOnce({ advance, transporterId, delta, level }) {
+  return await runTransaction(db, (tx) => commitOnceTx(tx, {
+    guardRef: paths.advance(advance.id),
+    docs: [{ ref: paths.advance(advance.id), data: advance }],
+    balance: { ref: paths.transporter(transporterId), delta, level },
+    increment,
+  }))
+}
+
 export function FirestoreProvider({ children }) {
   const [ready, setReady] = useState(false)
   const [timedOut, setTimedOut] = useState(false)
@@ -267,6 +296,74 @@ export function FirestoreProvider({ children }) {
     setDoc(paths.logDoc(id), { id, ts: new Date().toISOString(), action, detail, by, ref })
   }, [])
 
+  const [pending, setPending] = useState(outboxList())
+
+  // Try to upload ONE outbox item. Allocates its reference number lazily at upload
+  // time (persisting it back so a retry reuses it, not a fresh number). Returns the
+  // result so the caller can show the challan/payment on immediate success. The
+  // in-flight guard stops the foreground save and background sync from both running
+  // this item (which would allocate two numbers).
+  const uploadItem = useCallback(async (item) => {
+    if (inFlight.has(item.id)) return { uploaded: false }
+    inFlight.add(item.id)
+    try {
+      if (item.kind === 'advance') {
+        let advance = item.advance
+        if (!advance.paymentNo) {
+          const paymentNo = await allocateNumber('payment')
+          advance = { ...advance, paymentNo }
+          outboxUpdate({ ...item, advance })
+        }
+        const res = await commitAdvanceOnce({ advance, transporterId: item.transporterId, delta: item.delta, level: item.level })
+        if (res.ok) { outboxRemove(item.id); return { uploaded: true, paymentNo: advance.paymentNo } }
+        return { uploaded: false }
+      }
+      // chakkar
+      let inserts = item.inserts
+      if (item.kind === 'new' && !inserts[0].challanNo) {
+        const challan = await allocateNumber('challan')
+        inserts = inserts.map(r => ({ ...r, challanNo: challan }))
+        outboxUpdate({ ...item, inserts })
+      }
+      const res = await commitChakkarOnce({ inserts, balance: item.balance })
+      if (res.ok) { outboxRemove(item.id); return { uploaded: true, challanNo: inserts[0].challanNo || 0 } }
+      return { uploaded: false }
+    } finally { inFlight.delete(item.id) }
+  }, [])
+
+  const syncOutbox = useCallback(async () => {
+    // Don't fire server transactions while truly offline — they hang, not fail.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { setPending(outboxList()); return }
+    for (const item of outboxList()) {
+      try { await uploadItem(item) } catch { /* stays queued for the next trigger */ }
+    }
+    setPending(outboxList())
+  }, [uploadItem])
+
+  // Phone-first save: enqueue DURABLY first, then attempt the upload WITHOUT ever
+  // blocking the UI. When offline we skip the transaction entirely (it would hang,
+  // not fail). When online we race the upload against a 3s cap so an online user
+  // still gets the challan/payment back, but an offline/quota user is never stuck.
+  const outboxSave = useCallback(async (item) => {
+    outboxEnqueue(item)
+    setPending(outboxList())
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return { uploaded: false }
+    const attempt = uploadItem(item)
+      .then(r => { setPending(outboxList()); return r })
+      .catch(() => { setPending(outboxList()); return { uploaded: false } })
+    const timeout = new Promise(res => setTimeout(() => res({ uploaded: false }), 3000))
+    return await Promise.race([attempt, timeout])
+  }, [uploadItem])
+
+  // Flush the outbox once the app is ready, and again whenever the phone reconnects.
+  useEffect(() => {
+    if (!ready) return
+    syncOutbox() // eslint-disable-line react-hooks/set-state-in-effect -- async: setPending only runs after awaits
+    const onOnline = () => syncOutbox()
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [ready, syncOutbox])
+
   if (!ready && timedOut) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-4 p-6 text-center">
@@ -293,6 +390,7 @@ export function FirestoreProvider({ children }) {
       commitBatch: (spec) => commitBatchGuarded(paths.entry, spec),
     },
     advances, settlements, users, logs,
+    outbox: { pending, save: outboxSave, syncNow: syncOutbox },
     lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
     commitAdvance: commitAdvanceAndBalance,
     commitReversal: commitReversalAndBalance,
@@ -300,6 +398,7 @@ export function FirestoreProvider({ children }) {
   }
   return (
     <FreightCtx.Provider value={value}>
+      <PendingUploadBanner pending={pending} onSyncNow={syncOutbox} />
       {writeError && (
         <div className="fixed top-0 inset-x-0 z-50 bg-red-600 text-white text-sm px-4 py-3 flex items-center gap-3 shadow-lg"
           style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}>

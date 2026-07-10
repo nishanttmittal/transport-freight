@@ -13,6 +13,7 @@ import { makeId } from '../../../core/db/repository'
 import { useFreight } from '../FreightContext'
 import { entryTotal, lockedOn, nextChallanNo, dropError } from '../logic/calc'
 import { findDuplicate } from '../logic/status'
+import { outboxEntryRows } from '../logic/outbox'
 import { auditLine } from '../logic/audit'
 import { balanceHint } from '../logic/balance'
 import { EXTRA_POINT_HINT, CHALLAN_START, fmtChallan } from '../config'
@@ -23,7 +24,7 @@ const emptyDrop = () => ({ destinationId: '', bags: '', pvtMarka: '', freight: '
 const dropFromRow = (r) => ({ destinationId: r.destinationId || '', bags: r.bags ? String(r.bags) : '', pvtMarka: r.pvtMarka || '', freight: r.freight ? String(r.freight) : '', lrCharge: r.lrCharge ? String(r.lrCharge) : '', unloading: r.unloading ? String(r.unloading) : '', misc: r.misc ? String(r.misc) : '', extraPoint: r.extraPoint ? String(r.extraPoint) : '', remarks: r.remarks || '' })
 
 export default function Entry({ by = '', level = '', pendingMode = false, lockTransporterId = '', lockTransporterName = '', editBatch = null, ownerEdit = false, onDone = null }) {
-  const { transporters, destinations, entries, settlements, lastUsed, logs, log, allocateNumber } = useFreight()
+  const { transporters, destinations, entries, settlements, lastUsed, logs, log, outbox } = useFreight()
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
   const editing = Array.isArray(editBatch) && editBatch.length > 0
@@ -123,20 +124,21 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
     }
 
     // NEW — gaadiwala pending submission OR staff direct-passed entry.
-    const dup = findDuplicate(entries.list, { transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), date: veh.date, ...drops[0], destinationId: drops[0].destinationId })
+    // Dup-check also scans the outbox so a chakkar saved-on-phone-but-not-yet-
+    // uploaded still trips the "possible duplicate?" confirm (no re-entry doubling).
+    const dup = findDuplicate([...entries.list, ...outboxEntryRows()], { transporterId: veh.transporterId, gaadiNumber: veh.gaadiNumber.trim(), date: veh.date, ...drops[0], destinationId: drops[0].destinationId })
     if (dup && !window.confirm(`Possible duplicate of ${dup.challanNo ? fmtChallan(dup.challanNo) : 'a recent trip'} (same gaadi, date, amount). Save anyway?`)) return
     setBusy(true)
     try {
       const bId = makeId('batch')
-      const challan = pendingMode ? 0 : await allocateNumber('challan')
       let grand = 0
-      // All drops of the chakkar are written in ONE atomic transaction (P1.3),
-      // so a mid-save failure can't leave a half-recorded vehicle (which a retry
-      // would then double-count).
+      // Build all drop rows with FIXED ids (challan filled in at upload time). The
+      // chakkar is saved to the phone first via the outbox, then uploaded in ONE
+      // idempotent transaction — never lost, never double-counted on retry.
       const inserts = drops.map((d) => {
         const rec = {
           id: makeId('r'),
-          date: veh.date, challanNo: challan, status: pendingMode ? 'pending' : 'passed', revision: 0,
+          date: veh.date, challanNo: 0, status: pendingMode ? 'pending' : 'passed', revision: 0,
           submittedBy: by || '', transporterName: gName, transporterId: veh.transporterId,
           gaadiNumber: veh.gaadiNumber.trim(), ...rowFields(d),
           batchId: bId, createdByRole: level || '', createdByUser: by || '',
@@ -148,7 +150,14 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
       // A passed (staff/owner) entry moves the balance in the SAME txn (P1-2);
       // a pending (gaadiwala) submission doesn't touch the balance until passed.
       const bh = pendingMode ? null : balanceHint(transporters, veh.transporterId, +grand)
-      await entries.commitBatch({ inserts, balance: bh ? { transporterId: veh.transporterId, delta: +grand, level: bh.level } : null })
+      const item = {
+        id: bId, kind: pendingMode ? 'pending' : 'new', by, level,
+        transporterId: veh.transporterId, transporterName: gName, gaadiNumber: veh.gaadiNumber.trim(),
+        date: veh.date, inserts, grand,
+        balance: bh ? { transporterId: veh.transporterId, delta: +grand, level: bh.level } : null,
+        createdAt: new Date().toISOString(),
+      }
+      const res = await outbox.save(item)
       const n = drops.length
       lastUsed.set({ ...(lastUsed.get() || {}), gaadiNumber: veh.gaadiNumber })
       if (pendingMode) {
@@ -156,14 +165,13 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         logs.insert(auditLine('entry.submit', { by, role: level, after: { total: grand, drops: n }, device: navigator.userAgent }))
         setVeh({ date: veh.date, transporterId: lockTransporterId || '', gaadiNumber: '' })
         setDrops([emptyDrop()])
-        show(`Sent for approval ✓ · ${n} drop${n > 1 ? 's' : ''}`, 2600)
+        show(res.uploaded ? `Sent for approval ✓ · ${n} drop${n > 1 ? 's' : ''}` : 'Saved on your phone ✓ — will upload when online', 3000)
       } else {
-        const crossed = bh ? bh.crossed : null
-        log('entry.add', `${fmtChallan(challan)} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
-        logs.insert(auditLine('entry.add', { by, role: level, after: { challanNo: challan, total: grand, drops: n }, device: navigator.userAgent }))
+        log('entry.add', `${res.challanNo ? fmtChallan(res.challanNo) : '(pending upload)'} ${fmtDate(veh.date)} ₹${grand} · ${n} drop${n > 1 ? 's' : ''}`, by, bId)
+        logs.insert(auditLine('entry.add', { by, role: level, after: { challanNo: res.challanNo || 0, total: grand, drops: n }, device: navigator.userAgent }))
         setVeh({ date: veh.date, transporterId: '', gaadiNumber: '' })
         setDrops([emptyDrop()])
-        show(crossed ? `Saved ${fmtChallan(challan)} · ${gName} crossed ₹${fmtNum(crossed)}` : `Saved ${fmtChallan(challan)} · ${n} drop${n > 1 ? 's' : ''} ✓`, 2600)
+        show(res.uploaded ? `Saved ${fmtChallan(res.challanNo)} · ${n} drop${n > 1 ? 's' : ''} ✓` : 'Saved on your phone ✓ — will upload when online', 3000)
       }
     } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }

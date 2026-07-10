@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { Button, Card, FieldLabel, TextInput, NumberInput, DateInput, Select, useToast, Toast } from '../../../core/ui'
 import { todayStr, fmtNum, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
+import { makeId } from '../../../core/db/repository'
 import { lockedOn } from '../logic/calc'
 import { makeReversal } from '../logic/status'
 import { auditLine } from '../logic/audit'
@@ -16,7 +17,7 @@ import { PAID_BY, fmtPayment } from '../config'
 const active = (list) => (list || []).filter(x => !x.deleted)
 
 export default function Advances({ owner = false, by = '', level = '' }) {
-  const { transporters, advances, settlements, logs, log, allocateNumber, commitAdvance, commitReversal } = useFreight()
+  const { transporters, advances, settlements, logs, log, commitReversal, outbox } = useFreight()
   const { msg, show } = useToast()
   const [form, setForm] = useState({ date: todayStr(), transporterId: '', amount: '', paidBy: PAID_BY[0], note: '' })
   const [busy, setBusy] = useState(false)
@@ -34,15 +35,17 @@ export default function Advances({ owner = false, by = '', level = '' }) {
     if (lockedOn(settlements.list, form.transporterId, form.date)) return show('This period is settled & locked', 2600)
     setBusy(true)
     try {
-      const paymentNo = await allocateNumber('payment')
-      const rec = { date: form.date, transporterId: form.transporterId, transporterName: tName(form.transporterId), amount: amt, paidBy: form.paidBy, note: form.note.trim(), paymentNo, reversal: false, reversed: false, factoryId: 'main', deleted: false, createdByUser: by || '' }
-      // Payment record + balance decrement as ONE batch (P1-2) — never one without the other.
+      const id = makeId('r')
+      // Phone-first: save to the outbox, then upload in ONE idempotent batch
+      // (record + balance decrement together, payment number assigned at upload).
       const { level: lvl } = balanceHint(transporters, form.transporterId, -amt)
-      await commitAdvance({ advance: rec, transporterId: form.transporterId, delta: -amt, level: lvl })
-      log('advance.add', `${fmtPayment(paymentNo)} ${tName(form.transporterId)} ₹${amt} by ${form.paidBy}`, by, form.transporterId)
-      audit({ action: 'payment.add', by, role: level, after: rec })
+      const rec = { id, date: form.date, transporterId: form.transporterId, transporterName: tName(form.transporterId), amount: amt, paidBy: form.paidBy, note: form.note.trim(), paymentNo: 0, reversal: false, reversed: false, factoryId: 'main', deleted: false, createdByUser: by || '' }
+      const item = { id, kind: 'advance', transporterId: form.transporterId, transporterName: tName(form.transporterId), advance: rec, delta: -amt, level: lvl, amount: amt, createdAt: new Date().toISOString() }
+      const res = await outbox.save(item)
+      log('advance.add', `${res.paymentNo ? fmtPayment(res.paymentNo) : '(pending upload)'} ${tName(form.transporterId)} ₹${amt} by ${form.paidBy}`, by, form.transporterId)
+      audit({ action: 'payment.add', by, role: level, after: { ...rec, paymentNo: res.paymentNo || 0 } })
       setForm(f => ({ ...f, amount: '', note: '' }))
-      show(`Saved ${fmtPayment(paymentNo)} ✓`)
+      show(res.uploaded ? `Saved ${fmtPayment(res.paymentNo)} ✓` : 'Saved on your phone ✓ — will upload when online', 3000)
     } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 

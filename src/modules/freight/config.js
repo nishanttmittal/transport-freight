@@ -34,6 +34,9 @@ export const fmtPayment = (no) => (Number(no) > 0 ? `${PAYMENT_PREFIX}${String(n
 /** Hisab alert levels (₹). Banner escalates as a transporter's balance crosses each. */
 export const THRESHOLD_LEVELS = [5000, 10000, 15000, 20000]
 
+/** Owner WhatsApp (E.164, no +) for the "pending upload" alert deep-link. */
+export const OWNER_WHATSAPP = '919810013908'
+
 /** Free-typed extra-point hint shown on the entry form. */
 export const EXTRA_POINT_HINT = '+50 same area · +200 far area (per extra drop)'
 

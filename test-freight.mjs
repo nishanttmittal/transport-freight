@@ -190,4 +190,68 @@ assert.equal(transporterDeleteBlock({ runningBalance: -100, hasEntries: false })
 assert.equal(transporterDeleteBlock({ runningBalance: 0, hasEntries: true }), 'has trip history', 'trip history blocks delete')
 assert.equal(transporterDeleteBlock({}), '', 'defaults = removable')
 
+// ---- Outbox (offline queue) ----
+import { setStorageAdapter } from './src/core/db/storage.js'
+import { outboxList, outboxEnqueue, outboxRemove, outboxUpdate, outboxHas, outboxClear, outboxEntryRows }
+  from './src/modules/freight/logic/outbox.js'
+{
+  const mem = {}
+  setStorageAdapter({ getRaw: k => (k in mem ? mem[k] : null), setRaw: (k, v) => { mem[k] = v }, remove: k => { delete mem[k] }, keys: () => Object.keys(mem) })
+  outboxClear()
+  assert.deepEqual(outboxList(), [])
+  outboxEnqueue({ id: 'a', kind: 'new', grand: 100 })
+  outboxEnqueue({ id: 'b', kind: 'advance', amount: 50 })
+  outboxEnqueue({ id: 'a', kind: 'new', grand: 999 })            // dupe id ignored
+  assert.equal(outboxList().length, 2)
+  assert.ok(outboxHas('a')); assert.ok(!outboxHas('z'))
+  outboxUpdate({ id: 'a', kind: 'new', grand: 777 })             // update in place
+  assert.equal(outboxList().find(x => x.id === 'a').grand, 777)
+  outboxRemove('a')
+  assert.equal(outboxList().length, 1); assert.ok(!outboxHas('a'))
+  // entry rows: only chakkar inserts, flattened + tagged
+  outboxClear()
+  outboxEnqueue({ id: 'c1', kind: 'new', inserts: [{ id: 'r1', freight: 100 }, { id: 'r2', freight: 200 }] })
+  outboxEnqueue({ id: 'c2', kind: 'pending', inserts: [{ id: 'r3', freight: 300 }] })
+  outboxEnqueue({ id: 'p1', kind: 'advance', amount: 50 })   // advances excluded
+  const rows = outboxEntryRows()
+  assert.equal(rows.length, 3)
+  assert.ok(rows.every(r => r.pendingUpload === true))
+  assert.deepEqual(rows.map(r => r.id).sort(), ['r1', 'r2', 'r3'])
+}
+console.log('outbox ok')
+
+// ---- Idempotent commit body ----
+import { commitOnceTx } from './src/modules/freight/logic/idempotent.js'
+function fakeTx(exists) {
+  const sets = []
+  return { sets, get: async () => ({ exists: () => exists }), set: (ref, data, opts) => sets.push({ ref, data, opts }) }
+}
+const fakeInc = (n) => ({ __inc: n })
+{
+  // fresh (guard absent): writes 2 docs + 1 balance set with increment
+  const tx = fakeTx(false)
+  const r = await commitOnceTx(tx, {
+    guardRef: 'g',
+    docs: [{ ref: 'e1', data: { a: 1 } }, { ref: 'e2', data: { a: 2 } }],
+    balance: { ref: 'tr', delta: 500, level: 5000 },
+    increment: fakeInc,
+  })
+  assert.deepEqual(r, { ok: true })
+  assert.equal(tx.sets.length, 3)
+  const bal = tx.sets.find(s => s.ref === 'tr')
+  assert.deepEqual(bal.data.runningBalance, { __inc: 500 })
+  assert.equal(bal.data.alertedLevel, 5000)
+}
+{
+  // replay (guard present): writes NOTHING, balance not touched
+  const tx = fakeTx(true)
+  const r = await commitOnceTx(tx, {
+    guardRef: 'g', docs: [{ ref: 'e1', data: { a: 1 } }],
+    balance: { ref: 'tr', delta: 500 }, increment: fakeInc,
+  })
+  assert.deepEqual(r, { ok: true, already: true })
+  assert.equal(tx.sets.length, 0)
+}
+console.log('idempotent ok')
+
 console.log('ALL FREIGHT CALC TESTS PASSED')
