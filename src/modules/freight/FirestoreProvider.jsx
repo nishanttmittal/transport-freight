@@ -307,6 +307,23 @@ export function FirestoreProvider({ children }) {
     if (inFlight.has(item.id)) return { uploaded: false }
     inFlight.add(item.id)
     try {
+      if (item.kind === 'reversal') {
+        // A reversing payment — idempotent by its deterministic id (rev_<paymentNo>);
+        // commitReversalAndBalance aborts if it already exists, so a retry can't add
+        // the money back twice. No number to allocate.
+        const res = await commitReversalAndBalance({ reversal: item.reversal, transporterId: item.transporterId, delta: item.delta, level: item.level })
+        if (res.ok) { outboxRemove(item.id); return { uploaded: true } }
+        if (res.reason === 'already') { outboxRemove(item.id); return { uploaded: true, already: true } }
+        return { uploaded: false }
+      }
+      if (item.kind === 'edit') {
+        // An edit to an existing chakkar — revision-guarded (commitBatchGuarded). If the
+        // chakkar changed since (rare, another device), the guard rejects it as stale;
+        // we drop the queued edit and tell the caller so the user can redo it.
+        const res = await commitBatchGuarded(paths.entry, item.spec)
+        if (res.ok) { outboxRemove(item.id); return { uploaded: true } }
+        outboxRemove(item.id); return { uploaded: false, stale: true }
+      }
       if (item.kind === 'advance') {
         let advance = item.advance
         if (!advance.paymentNo) {
@@ -337,12 +354,22 @@ export function FirestoreProvider({ children }) {
   // Fast online saves log their number in the page directly, so they skip this.
   const logUploaded = useCallback((item, res) => {
     if (!res || !res.uploaded || res.already) return
+    // Only 'new' chakkars and 'advance' payments get a number AT upload time, so only
+    // they need the backfill. Reversals/edits carry their existing number from save.
     if (item.kind === 'advance') {
       log('advance.uploaded', `${fmtPayment(res.paymentNo)} ${item.transporterName} ₹${item.amount} (uploaded from phone)`, item.advance?.createdByUser || 'user', item.transporterId)
-    } else {
+    } else if (item.kind === 'new') {
       log('entry.uploaded', `${fmtChallan(res.challanNo)} ${item.transporterName} ₹${item.grand} (uploaded from phone)`, item.by || 'user', item.id)
     }
   }, [log])
+
+  // A queued EDIT that couldn't apply on upload (the chakkar changed under it) is
+  // surfaced so the user redoes it — never silently dropped.
+  const [editFailures, setEditFailures] = useState([])
+  const noteEditFailure = useCallback((item) => {
+    setEditFailures(fs => fs.some(f => f.id === item.id) ? fs : [...fs, { id: item.id, challanNo: item.challanNo || 0, transporterName: item.transporterName, date: item.date }])
+  }, [])
+  const dismissEditFailure = useCallback((id) => setEditFailures(fs => fs.filter(f => f.id !== id)), [])
 
   const syncOutbox = useCallback(async () => {
     // Don't fire server transactions while truly offline — they hang, not fail.
@@ -350,10 +377,10 @@ export function FirestoreProvider({ children }) {
     for (const item of outboxList()) {
       // Items still in the outbox were saved-but-not-yet-uploaded → log the number
       // they receive now (the page logged only "(pending upload)" for them).
-      try { const res = await uploadItem(item); logUploaded(item, res) } catch { /* stays queued for the next trigger */ }
+      try { const res = await uploadItem(item); logUploaded(item, res); if (res && res.stale) noteEditFailure(item) } catch { /* stays queued for the next trigger */ }
     }
     setPending(outboxList())
-  }, [uploadItem, logUploaded])
+  }, [uploadItem, logUploaded, noteEditFailure])
 
   // Phone-first save: enqueue DURABLY first, then attempt the upload WITHOUT ever
   // blocking the UI. When offline we skip the transaction entirely (it would hang,
@@ -366,12 +393,13 @@ export function FirestoreProvider({ children }) {
     let raced = false
     const attempt = uploadItem(item)
       // If the 3s cap already returned (raced) but the upload then succeeds, the page
-      // logged "(pending upload)" — so backfill the real number here too.
-      .then(r => { setPending(outboxList()); if (raced) logUploaded(item, r); return r })
+      // logged "(pending upload)" — so backfill the real number (and surface a failed
+      // edit) here too.
+      .then(r => { setPending(outboxList()); if (raced) { logUploaded(item, r); if (r && r.stale) noteEditFailure(item) } return r })
       .catch(() => { setPending(outboxList()); return { uploaded: false } })
     const timeout = new Promise(res => setTimeout(() => { raced = true; res({ uploaded: false }) }, 3000))
     return await Promise.race([attempt, timeout])
-  }, [uploadItem, logUploaded])
+  }, [uploadItem, logUploaded, noteEditFailure])
 
   // Flush the outbox once the app is ready, and again whenever the phone reconnects.
   useEffect(() => {
@@ -408,7 +436,7 @@ export function FirestoreProvider({ children }) {
       commitBatch: (spec) => commitBatchGuarded(paths.entry, spec),
     },
     advances, settlements, users, logs,
-    outbox: { pending, save: outboxSave, syncNow: syncOutbox },
+    outbox: { pending, save: outboxSave, syncNow: syncOutbox, editFailures, dismissEditFailure },
     lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
     commitAdvance: commitAdvanceAndBalance,
     commitReversal: commitReversalAndBalance,
@@ -416,7 +444,7 @@ export function FirestoreProvider({ children }) {
   }
   return (
     <FreightCtx.Provider value={value}>
-      <PendingUploadBanner pending={pending} onSyncNow={syncOutbox} />
+      <PendingUploadBanner pending={pending} onSyncNow={syncOutbox} editFailures={editFailures} onDismissFailure={dismissEditFailure} />
       {writeError && (
         <div className="fixed top-0 inset-x-0 z-50 bg-red-600 text-white text-sm px-4 py-3 flex items-center gap-3 shadow-lg"
           style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}>

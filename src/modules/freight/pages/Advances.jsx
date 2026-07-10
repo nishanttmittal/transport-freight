@@ -17,7 +17,7 @@ import { PAID_BY, fmtPayment } from '../config'
 const active = (list) => (list || []).filter(x => !x.deleted)
 
 export default function Advances({ owner = false, by = '', level = '' }) {
-  const { transporters, advances, settlements, logs, log, commitReversal, outbox } = useFreight()
+  const { transporters, advances, settlements, logs, log, outbox } = useFreight()
   const { msg, show } = useToast()
   const [form, setForm] = useState({ date: todayStr(), transporterId: '', amount: '', paidBy: PAID_BY[0], note: '' })
   const [busy, setBusy] = useState(false)
@@ -63,11 +63,13 @@ export default function Advances({ owner = false, by = '', level = '' }) {
       const amt = Number(a.amount) || 0
       const rev = { ...makeReversal(a, by), id: `rev_${Number(a.paymentNo) || a.id}`, transporterName: tName(a.transporterId), factoryId: 'main' }
       const { level: lvl } = balanceHint(transporters, a.transporterId, +amt)
-      const res = await commitReversal({ reversal: rev, transporterId: a.transporterId, delta: +amt, level: lvl })
-      if (res && res.ok === false) return show('Already reversed', 2200)
+      // Phone-first: queue the reversal; it applies (idempotently, via its rev_<paymentNo>
+      // id) when online — the money can never be added back twice even on retry.
+      const item = { id: rev.id, kind: 'reversal', transporterId: a.transporterId, transporterName: tName(a.transporterId), reversal: rev, delta: +amt, level: lvl, amount: amt, createdAt: new Date().toISOString() }
+      const res = await outbox.save(item)
       log('advance.reverse', `${tName(a.transporterId)} ₹${a.amount} (${fmtPayment(a.paymentNo)})`, by, a.transporterId)
       audit({ action: 'payment.reverse', by, role: level, before: a, after: rev })
-      show('Reversed')
+      show(res.uploaded ? 'Reversed' : 'Saved on your phone ✓ — will reverse when online', 3000)
     } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
   }
 

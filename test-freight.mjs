@@ -212,7 +212,9 @@ import { outboxList, outboxEnqueue, outboxRemove, outboxUpdate, outboxHas, outbo
   outboxClear()
   outboxEnqueue({ id: 'c1', kind: 'new', inserts: [{ id: 'r1', freight: 100 }, { id: 'r2', freight: 200 }] })
   outboxEnqueue({ id: 'c2', kind: 'pending', inserts: [{ id: 'r3', freight: 300 }] })
-  outboxEnqueue({ id: 'p1', kind: 'advance', amount: 50 })   // advances excluded
+  outboxEnqueue({ id: 'p1', kind: 'advance', amount: 50 })         // advances excluded
+  outboxEnqueue({ id: 'rev_5', kind: 'reversal', amount: 50 })     // reversals excluded
+  outboxEnqueue({ id: 'e1', kind: 'edit', spec: { inserts: [{ id: 'x' }] } }) // edits excluded
   const rows = outboxEntryRows()
   assert.equal(rows.length, 3)
   assert.ok(rows.every(r => r.pendingUpload === true))

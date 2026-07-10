@@ -107,17 +107,25 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
           }
         }
         const balance = delta ? { transporterId: veh.transporterId, delta, level: balanceHint(transporters, veh.transporterId, delta).level } : null
-        const res = await entries.commitBatch({ updates, inserts, softDeletes, balance })
-        if (!res.ok) { show('Refresh — changed by someone else', 2600); return }
+        // Phone-first: the edit is saved to the outbox and applied (revision-guarded)
+        // when online. If it can't apply because the chakkar changed elsewhere, res.stale
+        // is set (immediate) or the pending banner flags it later — never silent.
+        const item = {
+          id: makeId('edit'), kind: 'edit', by, level, ownerEdit,
+          transporterId: veh.transporterId, transporterName: gName, date: veh.date,
+          challanNo: batchChallan, batchId: editBatch[0].batchId, spec: { updates, inserts, softDeletes, balance }, grand: newTotal,
+          createdAt: new Date().toISOString(),
+        }
+        const res = await outbox.save(item)
+        if (res.stale) { show('This chakkar was changed elsewhere — reopen and redo the edit', 3200); return }
         if (ownerEdit) {
           log('entry.edit', `${fmtChallan(batchChallan)} ${fmtDate(veh.date)} Δ₹${delta}`, by, editBatch[0].batchId)
           logs.insert(auditLine('entry.edit', { by, role: level, before: { total: oldTotal }, after: { total: newTotal }, device: navigator.userAgent }))
-          show('Entry updated ✓', 2400)
         } else {
           log('entry.resubmit', `${gName} ${fmtDate(veh.date)}`, by, editBatch[0].batchId)
           logs.insert(auditLine('entry.resubmit', { by, role: level, after: { batchId: editBatch[0].batchId }, device: navigator.userAgent }))
-          show('Resubmitted for approval ✓', 2400)
         }
+        show(res.uploaded ? (ownerEdit ? 'Entry updated ✓' : 'Resubmitted for approval ✓') : 'Saved on your phone ✓ — will apply when online', 2600)
         onDone && onDone()
       } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
       return
