@@ -9,7 +9,7 @@ import { db, paths, ensureSignedIn, watchAuth } from '../../core/db/firebase'
 import { makeNormalizer } from '../../core/schema/field'
 import { makeId } from '../../core/db/repository'
 import { transporterSchema, destinationSchema, entrySchema, advanceSchema, settlementSchema, userSchema } from './schema'
-import { OWNER_EMAILS } from './config'
+import { OWNER_EMAILS, fmtChallan, fmtPayment } from './config'
 import { nextFromCounters, COUNTER_START } from './logic/counters'
 import { isStale } from './logic/status'
 import { commitOnceTx } from './logic/idempotent'
@@ -315,7 +315,7 @@ export function FirestoreProvider({ children }) {
           outboxUpdate({ ...item, advance })
         }
         const res = await commitAdvanceOnce({ advance, transporterId: item.transporterId, delta: item.delta, level: item.level })
-        if (res.ok) { outboxRemove(item.id); return { uploaded: true, paymentNo: advance.paymentNo } }
+        if (res.ok) { outboxRemove(item.id); return { uploaded: true, paymentNo: advance.paymentNo, already: !!res.already } }
         return { uploaded: false }
       }
       // chakkar
@@ -326,19 +326,34 @@ export function FirestoreProvider({ children }) {
         outboxUpdate({ ...item, inserts })
       }
       const res = await commitChakkarOnce({ inserts, balance: item.balance })
-      if (res.ok) { outboxRemove(item.id); return { uploaded: true, challanNo: inserts[0].challanNo || 0 } }
+      if (res.ok) { outboxRemove(item.id); return { uploaded: true, challanNo: inserts[0].challanNo || 0, already: !!res.already } }
       return { uploaded: false }
     } finally { inFlight.delete(item.id) }
   }, [])
+
+  // Audit line written when a DEFERRED item (saved on the phone, then uploaded
+  // later) finally reaches the cloud — so the log records the real challan/payment
+  // number it got at upload, not the "(pending upload)" placeholder from save time.
+  // Fast online saves log their number in the page directly, so they skip this.
+  const logUploaded = useCallback((item, res) => {
+    if (!res || !res.uploaded || res.already) return
+    if (item.kind === 'advance') {
+      log('advance.uploaded', `${fmtPayment(res.paymentNo)} ${item.transporterName} ₹${item.amount} (uploaded from phone)`, item.advance?.createdByUser || 'user', item.transporterId)
+    } else {
+      log('entry.uploaded', `${fmtChallan(res.challanNo)} ${item.transporterName} ₹${item.grand} (uploaded from phone)`, item.by || 'user', item.id)
+    }
+  }, [log])
 
   const syncOutbox = useCallback(async () => {
     // Don't fire server transactions while truly offline — they hang, not fail.
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { setPending(outboxList()); return }
     for (const item of outboxList()) {
-      try { await uploadItem(item) } catch { /* stays queued for the next trigger */ }
+      // Items still in the outbox were saved-but-not-yet-uploaded → log the number
+      // they receive now (the page logged only "(pending upload)" for them).
+      try { const res = await uploadItem(item); logUploaded(item, res) } catch { /* stays queued for the next trigger */ }
     }
     setPending(outboxList())
-  }, [uploadItem])
+  }, [uploadItem, logUploaded])
 
   // Phone-first save: enqueue DURABLY first, then attempt the upload WITHOUT ever
   // blocking the UI. When offline we skip the transaction entirely (it would hang,
@@ -348,12 +363,15 @@ export function FirestoreProvider({ children }) {
     outboxEnqueue(item)
     setPending(outboxList())
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return { uploaded: false }
+    let raced = false
     const attempt = uploadItem(item)
-      .then(r => { setPending(outboxList()); return r })
+      // If the 3s cap already returned (raced) but the upload then succeeds, the page
+      // logged "(pending upload)" — so backfill the real number here too.
+      .then(r => { setPending(outboxList()); if (raced) logUploaded(item, r); return r })
       .catch(() => { setPending(outboxList()); return { uploaded: false } })
-    const timeout = new Promise(res => setTimeout(() => res({ uploaded: false }), 3000))
+    const timeout = new Promise(res => setTimeout(() => { raced = true; res({ uploaded: false }) }, 3000))
     return await Promise.race([attempt, timeout])
-  }, [uploadItem])
+  }, [uploadItem, logUploaded])
 
   // Flush the outbox once the app is ready, and again whenever the phone reconnects.
   useEffect(() => {
