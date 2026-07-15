@@ -12,8 +12,6 @@ export const ROLES = { owner: 'owner', manager: 'manager' }
 /** Display name for the staff/manager role (office staff who enter freight). */
 export const INCHARGE_LABEL = 'Staff'
 
-/** Casual-delete speed-bump (page already owner-only via Google). Not security. */
-export const ADMIN_PASSWORD = '6133923_N'
 
 /** Correct an entry within this many hours; after that owner-only. */
 export const EDIT_WINDOW_HOURS = 48

@@ -4,13 +4,13 @@
  * safety net if an incremental update was ever missed). Guarded by PasswordGate.
  */
 import { useState } from 'react'
-import { Button, Card, TextInput, Select, PasswordGate, useToast, Toast } from '../../../core/ui'
+import { Button, Card, TextInput, Select, useToast, Toast } from '../../../core/ui'
 import { fmtNum, fmtDate, todayStr } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { recomputeBalance, levelStyle } from '../logic/balance'
 import { thresholdLevel, ledgerLines, transporterTotals, unsettledFrom, openingBalance } from '../logic/calc'
 import { shareStatementPdf } from '../logic/pdf'
-import { ADMIN_PASSWORD, THRESHOLD_LEVELS, OWNER_EMAILS } from '../config'
+import { THRESHOLD_LEVELS, OWNER_EMAILS } from '../config'
 
 function Users() {
   const { users, transporters } = useFreight()
@@ -193,14 +193,13 @@ function CurrentHisabPdf() {
 }
 
 export default function Admin() {
+  // Owner-only page (roles: ['owner'] in manifest + Google sign-in) — no separate password needed.
   return (
-    <PasswordGate password={ADMIN_PASSWORD} title="Admin Access">
-      <div className="max-w-lg mx-auto p-4 space-y-4">
-        <Users />
-        <CurrentHisabPdf />
-        <OldHisab />
-        <Tools />
-      </div>
-    </PasswordGate>
+    <div className="max-w-lg mx-auto p-4 space-y-4">
+      <Users />
+      <CurrentHisabPdf />
+      <OldHisab />
+      <Tools />
+    </div>
   )
 }
