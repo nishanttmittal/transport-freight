@@ -63,8 +63,16 @@ export const paths = {
 export function ensureSignedIn() {
   return new Promise((resolve, reject) => {
     if (!auth) return reject(new Error('Firebase not configured'))
-    const unsub = onAuthStateChanged(auth, (user) => { if (user) { unsub(); resolve(user.uid) } })
-    signInAnonymously(auth).catch(reject)
+    // FIX 2026-07-19 (review finding C — the login LOOP): signInAnonymously used to fire
+    // unconditionally here, racing auth restore. After a Google signInWithRedirect return
+    // (installed PWA) it REPLACED the just-restored Google session with a fresh anonymous
+    // one — bouncing the user to the sign-in screen forever. Now we wait for the first
+    // auth state and only take the anonymous baseline when there is truly NO user.
+    let triedAnon = false
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) { unsub(); resolve(user.uid); return }
+      if (!triedAnon) { triedAnon = true; signInAnonymously(auth).catch((e) => { unsub(); reject(e) }) }
+    })
   })
 }
 

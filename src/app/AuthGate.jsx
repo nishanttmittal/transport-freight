@@ -51,6 +51,13 @@ export default function AuthGate({ title = 'UNICO', children }) {
   const [err, setErr] = useState('')
 
   useEffect(() => watchAuth(setUser), [])
+  // Surface errors from the signInWithRedirect RETURN leg (fix 2026-07-19, finding D):
+  // a failed redirect login used to land back on this screen with no message at all.
+  useEffect(() => {
+    import('firebase/auth').then(({ getRedirectResult, getAuth }) =>
+      getRedirectResult(getAuth()).catch((e) => setErr(e?.message || 'Google sign-in failed — try again'))
+    ).catch(() => {})
+  }, [])
 
   const email = user && !user.isAnonymous ? (user.email || '') : ''
   const role = resolveRole(email, users.list)
