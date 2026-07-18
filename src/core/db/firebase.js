@@ -78,6 +78,16 @@ export async function signInWithGoogle() {
   if (!auth) throw new Error('Cloud not configured')
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: 'select_account' })
+  // FIX 2026-07-19 (the 3-July→ outage): in an INSTALLED home-screen PWA (iOS/Android
+  // standalone), signInWithPopup opens a window that can never message back — it neither
+  // resolves nor rejects, so the button hung at "Opening…" forever and staff could not
+  // log in at all. Standalone mode must go straight to the full-page redirect.
+  const standalone = typeof window !== 'undefined' &&
+    (window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true)
+  if (standalone) {
+    const { signInWithRedirect } = await import('firebase/auth')
+    return signInWithRedirect(auth, provider)
+  }
   try {
     return await signInWithPopup(auth, provider)
   } catch (e) {
