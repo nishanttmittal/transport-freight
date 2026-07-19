@@ -7,7 +7,13 @@ export const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
-/** ISO yyyy-mm-dd for today (local). */
+/** ISO yyyy-mm-dd for today.
+ *  WARNING - KNOWN BUG (verified 2026-07-19, not yet fixed):
+ *  toISOString() returns a UTC date, NOT local. Between 00:00 and 05:29 IST
+ *  this gives YESTERDAY's date, so early-morning entries file under the wrong
+ *  day. Correct fix = format the date in the Asia/Kolkata timezone.
+ *  Deliberately NOT changed yet: it alters which day an entry is dated under,
+ *  which touches money/reporting. Needs owner sign-off. Same bug in daysAgoStr. */
 export const todayStr = () => new Date().toISOString().slice(0, 10)
 
 /** ISO yyyy-mm-dd for N days before today (local). */
