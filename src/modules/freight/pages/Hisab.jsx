@@ -42,7 +42,10 @@ export default function Hisab({ owner = false, by = '' }) {
   const from = tid ? unsettledFrom(settlements.list, tid) : ''
   const opening = tid ? openingBalance(settlements.list, tid) : 0
   const lines = tid ? ledgerLines(entries.list, advances.list, tid, { from, opening }) : []
-  const totals = tid ? transporterTotals(entries.list, advances.list, tid, { from, opening }) : { freight: 0, advances: 0, opening: 0, balance: 0 }
+  // upToDate cap (fix 2026-07-19, review #3): a future-dated typo used to fold into the settle
+  // closing AND be re-counted in the next period (recompute lower bound is date > cutoff) —
+  // verified ₹500 double-count. Hisab and settle now count only up to today.
+  const totals = tid ? transporterTotals(entries.list, advances.list, tid, { from, opening, upToDate: todayStr() }) : { freight: 0, advances: 0, opening: 0, balance: 0 }
   const level = thresholdLevel(totals.balance, THRESHOLD_LEVELS)
   const style = levelStyle(level)
 
@@ -103,8 +106,12 @@ export default function Hisab({ owner = false, by = '' }) {
       }
 
       // ONE atomic write: payment + settlement + carried-forward running balance.
+      // expectedBalance (fix 2026-07-19, review #2): settle re-reads the live balance in a
+      // transaction; any entry/advance that landed between screen-read and settle-commit is
+      // preserved as drift on top of the closing instead of being silently overwritten.
       await settleBatch({
         payment, settlement, transporterId: tid,
+        expectedBalance: Number(transporter.runningBalance) || 0,
         transporterPatch: { runningBalance: closing, alertedLevel: thresholdLevel(closing, THRESHOLD_LEVELS) },
       })
 

@@ -3,7 +3,7 @@
  * Same value shape as the local provider. No master seeding (transporters and
  * destinations are added in the app).
  */
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { onSnapshot, setDoc, deleteDoc, getDocs, writeBatch, runTransaction, query, where, increment } from 'firebase/firestore'
 import { db, paths, ensureSignedIn, watchAuth } from '../../core/db/firebase'
 import { makeNormalizer } from '../../core/schema/field'
@@ -12,6 +12,7 @@ import { transporterSchema, destinationSchema, entrySchema, advanceSchema, settl
 import { OWNER_EMAILS, fmtChallan, fmtPayment } from './config'
 import { nextFromCounters, COUNTER_START } from './logic/counters'
 import { isStale } from './logic/status'
+import { lockedOn } from './logic/calc'
 import { commitOnceTx } from './logic/idempotent'
 import { outboxList, outboxEnqueue, outboxUpdate, outboxRemove } from './logic/outbox'
 import { lastUsedStore } from './data'
@@ -199,19 +200,28 @@ async function commitReversalAndBalance({ reversal, transporterId, delta, level 
  * allocated by their own atomic counter txns BEFORE this call — a burned number on
  * failure is just a harmless gap in the sequence.
  */
-async function settleBatch({ payment = null, settlement, transporterId, transporterPatch }) {
+async function settleBatch({ payment = null, settlement, transporterId, transporterPatch, expectedBalance = null }) {
   const now = new Date().toISOString()
-  const b = writeBatch(db)
-  let paymentId = null
-  if (payment) {
-    paymentId = payment.id || makeId('r')
-    b.set(paths.advance(paymentId), { createdAt: now, updatedAt: now, ...payment, id: paymentId })
-  }
-  const settlementId = settlement.id || makeId('r')
-  b.set(paths.settlementDoc(settlementId), { createdAt: now, updatedAt: now, ...settlement, id: settlementId })
-  b.set(paths.transporter(transporterId), { ...transporterPatch, updatedAt: now }, { merge: true })
-  await b.commit()
-  return { paymentId, settlementId }
+  // TRANSACTION, not a blind batch (fix 2026-07-19, review #2 TOCTOU): the settle used to SET
+  // runningBalance = closing computed from a stale screen read — an entry/advance committed in
+  // between was silently overwritten AND locked out of future recompute (money unrecoverable).
+  // Now we re-read the live balance and carry any drift since the screen read on top of closing.
+  return await runTransaction(db, async (tx) => {
+    const tSnap = await tx.get(paths.transporter(transporterId))
+    const live = Number(tSnap.exists() ? tSnap.data().runningBalance : 0) || 0
+    const drift = expectedBalance == null ? 0 : Math.round((live - Number(expectedBalance)) * 100) / 100
+    const patch = { ...transporterPatch, updatedAt: now }
+    if (drift !== 0 && typeof patch.runningBalance === 'number') patch.runningBalance = Math.round((patch.runningBalance + drift) * 100) / 100
+    let paymentId = null
+    if (payment) {
+      paymentId = payment.id || makeId('r')
+      tx.set(paths.advance(paymentId), { createdAt: now, updatedAt: now, ...payment, id: paymentId })
+    }
+    const settlementId = settlement.id || makeId('r')
+    tx.set(paths.settlementDoc(settlementId), { createdAt: now, updatedAt: now, ...settlement, id: settlementId })
+    tx.set(paths.transporter(transporterId), patch, { merge: true })
+    return { paymentId, settlementId, drift }
+  })
 }
 
 /** Upload a whole chakkar idempotently (guard = its first row id). */
@@ -267,7 +277,10 @@ export function FirestoreProvider({ children }) {
   const myTransporter = useCloudDoc(gTid ? () => paths.transporter(gTid) : null, normTransporter, `${authKey}|${gTid}`)
   const transporters = gTid ? { ...transportersCol, list: myTransporter ? [myTransporter] : [] } : transportersCol
   const destinations = useCloudCollection(paths.destinations, paths.destination, normDestination, authKey, null, reportWriteError)
-  const logs         = useCloudCollection(paths.logs, paths.logDoc, (r) => r, authKey, null, reportWriteError)
+  // amManager-gated (fix 2026-07-19, review A2): rules allow logs READ to managers only, so a
+  // gaadiwala session used to throw a permanent permission-denied on this listener. Writes
+  // (audit lines) still work for every role — only the subscription is gated.
+  const logs         = useCloudCollection(paths.logs, paths.logDoc, (r) => r, authKey, null, reportWriteError, amManager)
 
   // Only managers/owner load the WHOLE users list (for Admin / login management);
   // a gaadiwala sees just his own doc, so he never attempts a denied read.
@@ -298,6 +311,14 @@ export function FirestoreProvider({ children }) {
 
   const [pending, setPending] = useState(outboxList())
 
+  // Live settlements for the upload-time lock check below (a ref so uploadItem keeps
+  // stable identity while always seeing the current list).
+  const settlementsRef = useRef([])
+  useEffect(() => { settlementsRef.current = settlements.list || [] }, [settlements.list])
+  // Items an upload REFUSED to apply (settled period) — surfaced, never silently dropped.
+  const [heldItems, setHeldItems] = useState([])
+  const dismissHeld = useCallback((id) => setHeldItems(hs => hs.filter(h => h.id !== id)), [])
+
   // Try to upload ONE outbox item. Allocates its reference number lazily at upload
   // time (persisting it back so a retry reuses it, not a fresh number). Returns the
   // result so the caller can show the challan/payment on immediate success. The
@@ -305,6 +326,18 @@ export function FirestoreProvider({ children }) {
   // this item (which would allocate two numbers).
   const uploadItem = useCallback(async (item) => {
     if (inFlight.has(item.id)) return { uploaded: false }
+    // SETTLEMENT LOCK AT UPLOAD (fix 2026-07-19, outbox review #2): a chakkar/advance queued on a
+    // phone weeks ago must not land inside a period settled meanwhile — it would move the balance
+    // while sitting below the recompute cutoff, so a later "Recalculate" silently erases it. Hold
+    // it for the owner instead of applying it. (Save-time lockedOn can't see a future settlement.)
+    if (item.kind !== 'edit' && item.date && item.transporterId &&
+        lockedOn(settlementsRef.current, item.transporterId, item.date)) {
+      setHeldItems(hs => hs.some(h => h.id === item.id) ? hs : [...hs, {
+        id: item.id, transporterName: item.transporterName, date: item.date,
+        amount: item.grand != null ? item.grand : item.amount,
+      }])
+      return { uploaded: false, held: true }
+    }
     inFlight.add(item.id)
     try {
       if (item.kind === 'reversal') {
@@ -436,7 +469,7 @@ export function FirestoreProvider({ children }) {
       commitBatch: (spec) => commitBatchGuarded(paths.entry, spec),
     },
     advances, settlements, users, logs,
-    outbox: { pending, save: outboxSave, syncNow: syncOutbox, editFailures, dismissEditFailure },
+    outbox: { pending, save: outboxSave, syncNow: syncOutbox, editFailures, dismissEditFailure, heldItems, dismissHeld },
     lastUsed: lastUsedStore, log, allocateNumber, settleBatch,
     commitAdvance: commitAdvanceAndBalance,
     commitReversal: commitReversalAndBalance,
@@ -444,7 +477,7 @@ export function FirestoreProvider({ children }) {
   }
   return (
     <FreightCtx.Provider value={value}>
-      <PendingUploadBanner pending={pending} onSyncNow={syncOutbox} editFailures={editFailures} onDismissFailure={dismissEditFailure} />
+      <PendingUploadBanner pending={pending} onSyncNow={syncOutbox} editFailures={editFailures} onDismissFailure={dismissEditFailure} heldItems={heldItems} onDismissHeld={dismissHeld} />
       {writeError && (
         <div className="fixed top-0 inset-x-0 z-50 bg-red-600 text-white text-sm px-4 py-3 flex items-center gap-3 shadow-lg"
           style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top))' }}>

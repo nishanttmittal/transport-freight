@@ -22,10 +22,10 @@ const shortLabel = (p) => {
   return `${p.grand ? '₹' + p.grand : 'chakkar'} ${p.transporterName || ''}`.trim()
 }
 
-export default function PendingUploadBanner({ pending = [], onSyncNow, editFailures = [], onDismissFailure }) {
+export default function PendingUploadBanner({ pending = [], onSyncNow, editFailures = [], onDismissFailure, heldItems = [], onDismissHeld }) {
   const [open, setOpen] = useState(false)
   const n = pending.length
-  if (!n && !editFailures.length) return null
+  if (!n && !editFailures.length && !heldItems.length) return null
   const summary = pending.map(shortLabel).join(', ')
   const msg = encodeURIComponent(`UNICO Freight: ${n} entry(s) saved on the phone that haven't uploaded yet (no internet / server busy): ${summary}. They'll upload automatically when possible.`)
   const waHref = `https://wa.me/${OWNER_WHATSAPP}?text=${msg}`
@@ -36,6 +36,13 @@ export default function PendingUploadBanner({ pending = [], onSyncNow, editFailu
         <div key={f.id} className="bg-red-600 text-white text-sm px-4 py-2.5 flex items-center gap-3">
           <span className="flex-1">⚠️ An edit to {fmtChallan(f.challanNo)} ({f.transporterName}) couldn’t apply — it was changed elsewhere. Please open it and redo the change.</span>
           <button onClick={() => onDismissFailure && onDismissFailure(f.id)} className="font-bold bg-white/20 rounded-lg px-3 py-1">OK</button>
+        </div>
+      ))}
+      {/* Held by the settled-period lock — needs the owner, never silently dropped (2026-07-19) */}
+      {heldItems.map(h => (
+        <div key={h.id} className="bg-red-700 text-white text-sm px-4 py-2.5 flex items-center gap-3">
+          <span className="flex-1">🔒 A trip saved on the phone ({h.transporterName || 'gaadiwala'}, {h.date}{h.amount ? `, ₹${h.amount}` : ''}) is dated inside an already-SETTLED period, so it was not uploaded. Tell the owner — it must be added to the current hisab instead.</span>
+          <button onClick={() => onDismissHeld && onDismissHeld(h.id)} className="font-bold bg-white/20 rounded-lg px-3 py-1">OK</button>
         </div>
       ))}
       {n > 0 && (

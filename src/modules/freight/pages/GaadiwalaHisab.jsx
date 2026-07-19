@@ -67,8 +67,13 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
     if (!window.confirm('Remove this trip? (only allowed before approval)')) return
     // Remove ALL drops of the chakkar in ONE atomic batch (P2-5) — never leave
     // some drops of a trip removed and others not.
-    const res = await entries.commitBatch({ softDeletes: b.rows.map(r => r.id) })
-    show(res && res.ok === false ? 'Could not remove — check internet and try again' : 'Removed')
+    // REVISION-GUARDED (fix 2026-07-19, review #4): if the owner PASSED this trip while this
+    // screen still showed it pending, an unguarded soft-delete would erase rows that had already
+    // entered the running balance — money owed left standing with no trip behind it. As guarded
+    // updates, a concurrent pass bumps the revision and this aborts as stale instead.
+    const updates = b.rows.map(r => ({ id: r.id, expectedRevision: r.revision, patch: { deleted: true } }))
+    const res = await entries.commitBatch({ updates })
+    show(res && res.ok === false ? 'Could not remove — it was just approved or changed. Refresh and check.' : 'Removed')
   }
 
   return (

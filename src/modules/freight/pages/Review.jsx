@@ -71,6 +71,9 @@ export default function Review({ owner = false, by = '', level = '' }) {
     // Never pass a chakkar carrying a negative/zero-value drop (P1-3) — it would
     // corrupt the hisab. Send it back for correction instead.
     if (batch.rows.some(r => dropError(r))) return show('This chakkar has an invalid amount — Return it for correction', 3000)
+    // Settlement lock (fix 2026-07-19, review #1): passing a chakkar dated inside a locked
+    // period moves the balance in a way Recalculate later silently erases.
+    if (lockedOn(settlements.list, batch.transporterId, batch.date)) return show('🔒 That period is settled & locked — cannot pass this chakkar.', 3200)
     setBusy(true)
     try {
       const challan = await allocateNumber('challan')
@@ -87,6 +90,9 @@ export default function Review({ owner = false, by = '', level = '' }) {
     const reason = window.prompt(promptMsg)
     if (!reason || !reason.trim()) return show('A reason is required', 2200)
     if (busy) return
+    // Settlement lock (fix 2026-07-19, review #1): cancelling a settled chakkar corrupts the
+    // carried balance (stored −total, recompute unchanged — verified numerically).
+    if (action === 'cancel' && lockedOn(settlements.list, batch.transporterId, batch.date)) return show('🔒 That period is settled & locked — cannot cancel. Adjust in the current period instead.', 3400)
     setBusy(true)
     try {
       const bal = action === 'cancel' ? { transporterId: batch.transporterId, delta: -batch.total, level: balanceHint(transporters, batch.transporterId, -batch.total).level } : null

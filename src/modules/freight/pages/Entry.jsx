@@ -203,7 +203,9 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         )}
         <div>
           <FieldLabel>Date</FieldLabel>
-          <div className="mt-1.5"><DateInput value={veh.date} onChange={e => setVehField('date')(e.target.value)} /></div>
+          {/* max=today (fix 2026-07-19, review #3): a future-dated typo used to fold into the
+              settle closing AND be re-counted in the next period — verified ₹500 double-count. */}
+          <div className="mt-1.5"><DateInput value={veh.date} max={todayStr()} onChange={e => setVehField('date')(e.target.value)} /></div>
           <p className="text-[11px] text-slate-400 mt-1">{fmtDate(veh.date)}</p>
         </div>
 
