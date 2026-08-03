@@ -11,9 +11,28 @@
  * device only.
  */
 
+/**
+ * Google sign-in must be SAME-ORIGIN as the app, or installed iPhone PWAs can't
+ * complete it (iOS blocks reading the auth session across origins → login loops).
+ * When served from a Firebase Hosting domain (*.web.app / *.firebaseapp.com) use
+ * THAT hostname as the authDomain (its auth handler is first-party); elsewhere
+ * (github.io fallback) keep the project default, where Safari's popup still works.
+ *
+ * This is also the app's biggest LOAD-TIME win (measured 2026-08-04): from
+ * github.io the hidden /__/auth/iframe is cross-origin and cost 1,220 ms on a
+ * cold open; same-origin on firebaseapp.com the identical fetch took 77 ms.
+ */
+function resolveAuthDomain() {
+  if (typeof window !== 'undefined') {
+    const h = window.location.hostname
+    if (h.endsWith('.web.app') || h.endsWith('.firebaseapp.com')) return h
+  }
+  return 'unico-operations.firebaseapp.com'
+}
+
 export const firebaseConfig = {
   apiKey:            'AIzaSyCK0M-EfmOp9nh1-ZJcrBqT7c4plNxL2FM',
-  authDomain:        'unico-operations.firebaseapp.com',
+  authDomain:        resolveAuthDomain(),
   projectId:         'unico-operations',
   storageBucket:     'unico-operations.firebasestorage.app',
   messagingSenderId: '367786260524',
