@@ -14,48 +14,52 @@
 /**
  * Google sign-in must be SAME-ORIGIN as the app, or installed iPhone PWAs can't
  * complete it (iOS blocks reading the auth session across origins → login loops).
- * When served from a Firebase Hosting domain (*.web.app / *.firebaseapp.com) use
- * THAT hostname as the authDomain (its auth handler is first-party); elsewhere
- * (github.io fallback) keep the project default, where Safari's popup still works.
- *
- * This is also the app's biggest LOAD-TIME win (measured 2026-08-04): from
- * github.io the hidden /__/auth/iframe is cross-origin and cost 1,220 ms on a
- * cold open; same-origin on firebaseapp.com the identical fetch took 77 ms.
+ * It is also the biggest LOAD-TIME factor (measured 2026-08-04): from github.io the
+ * hidden /__/auth/iframe is cross-origin and cost 1,220 ms on a cold open; the
+ * identical fetch same-origin took 37 ms.
  */
 const PROJECT_AUTH_DOMAIN = 'unico-operations.firebaseapp.com'
 
 /**
- * Custom domains that are SAFE to use as their own authDomain.
+ * EXACT hosts whose own /__/auth/handler is registered with the Google OAuth client.
+ * Matching is exact — NOT by suffix.
  *
- * ⚠️ A domain belongs here ONLY after BOTH registrations are done, or Google
- * answers `redirect_uri_mismatch` and NOBODY can log in:
+ * ⚠️ Why not `*.web.app` / `*.firebaseapp.com`: a suffix test trusts ANY Firebase
+ * site, including ones whose redirect URI was never registered. `unico-plating.web.app`
+ * and `unico-welder.web.app` both exist and both FAIL Google sign-in with
+ * redirect_uri_mismatch (July 2026). Trusting them by suffix would hand the auth
+ * handler to a domain that cannot complete a login. Only `firebaseapp.com` — the
+ * project default — is pre-registered; `.web.app` and custom domains are not.
+ *
+ * ⚠️ A host belongs here ONLY after BOTH registrations are done:
  *   1. Firebase console → Auth → Settings → Authorized domains → add it, AND
  *   2. Google Cloud console → APIs & Services → Credentials → OAuth 2.0 client
  *      "Web client (auto created by Google Service)" → add redirect URI
- *      https://<domain>/__/auth/handler  + JS origin  https://<domain>
- * The domain must also actually SERVE Firebase Hosting's reserved /__/auth/*
- * paths — i.e. it is a Hosting custom domain, not a proxy/CDN in front of one.
- *
- * Empty today, so behaviour is unchanged. Adding a custom domain is then a
- * deliberate one-line edit — never a silent fallback.
+ *      https://<host>/__/auth/handler  + JS origin  https://<host>
+ * The host must also actually SERVE Firebase Hosting's reserved /__/auth/* paths
+ * (a Hosting custom domain — not a proxy/CDN in front of one). Verify with a REAL
+ * sign-in before adding: reaching Google's account chooser = registered;
+ * accounts.google.com/.../oauth/error?...redirect_uri_mismatch = not.
  */
-const SAME_ORIGIN_AUTH_HOSTS = [
-  // 'freight.unicoproductsindia.com',
-]
+export const APPROVED_AUTH_HOSTS = new Set([
+  'unico-operations.firebaseapp.com',
+  // 'freight.unicoproductsindia.com',   // only after steps 1 + 2 above
+])
+
+/**
+ * Pure, environment-independent so it can be unit-tested (see authDomain.test.mjs).
+ * Normalises the way a browser would: lowercase, trimmed, trailing FQDN dot removed.
+ * Anything not explicitly approved falls back to the project default — cross-origin
+ * (slower, and popup-only on iOS) but always able to complete a login. Fail closed.
+ */
+export function pickAuthDomain(hostname, approved = APPROVED_AUTH_HOSTS) {
+  const h = String(hostname ?? '').trim().toLowerCase().replace(/\.$/, '')
+  return approved.has(h) ? h : PROJECT_AUTH_DOMAIN
+}
 
 function resolveAuthDomain() {
   if (typeof window === 'undefined') return PROJECT_AUTH_DOMAIN
-  // Explicit build-time override always wins (VITE_AUTH_DOMAIN=…).
-  const forced = import.meta.env?.VITE_AUTH_DOMAIN
-  if (forced) return forced
-  const h = window.location.hostname
-  // Firebase Hosting's own domains always serve /__/auth/* and are pre-registered.
-  if (h.endsWith('.web.app') || h.endsWith('.firebaseapp.com')) return h
-  // A registered custom domain (see the list above).
-  if (SAME_ORIGIN_AUTH_HOSTS.includes(h)) return h
-  // Anything else (github.io fallback, localhost) → project default, cross-origin
-  // but working via Safari's popup path.
-  return PROJECT_AUTH_DOMAIN
+  return pickAuthDomain(window.location.hostname)
 }
 
 export const firebaseConfig = {
