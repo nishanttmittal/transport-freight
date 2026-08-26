@@ -33,11 +33,17 @@ export function buildStatementPdf({ transporterName, lines, destName, totals, pe
     : `up to ${fmtDate(todayStr())}`
   doc.text(`Period: ${periodTxt}`, 40, 80)
 
+  // Per-chakkar charge breakup under Details (only when more than one nonzero part).
+  const breakup = (l) => {
+    const parts = [['Freight', l.freight], ['Bilti', l.lrCharge], ['Labour', l.unloading], ['Misc', l.misc], ['Extra', l.extraPoint]]
+      .filter(([, v]) => Number(v) > 0)
+    return parts.length > 1 ? '\n' + parts.map(([n, v]) => `${n} ${fmtNum(v)}`).join(' + ') : ''
+  }
   const body = (lines || []).map(l => l.kind === 'advance'
     ? ['', fmtDate(l.date), 'Advance', l.paidBy ? `Paid by ${l.paidBy}` : (l.note || ''), '', `-${fmtNum(l.amount)}`, fmtNum(l.balance)]
     : l.kind === 'opening'
     ? ['', fmtDate(l.date), 'Brought fwd', 'Balance carried from last hisab', fmtNum(l.debit), '', fmtNum(l.balance)]
-    : [fmtChallan(l.challanNo), fmtDate(l.date), 'Freight', `${destName ? destName(l.destinationId) : ''}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`, fmtNum(l.debit), '', fmtNum(l.balance)])
+    : [fmtChallan(l.challanNo), fmtDate(l.date), 'Freight', `${destName ? destName(l.destinationId) : ''}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}${l.bags ? ' · ' + l.bags + ' bags' : ''}${breakup(l)}`, fmtNum(l.debit), '', fmtNum(l.balance)])
 
   autoTable(doc, {
     startY: 96,

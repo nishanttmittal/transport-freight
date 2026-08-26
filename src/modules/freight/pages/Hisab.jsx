@@ -29,6 +29,7 @@ export default function Hisab({ owner = false, by = '' }) {
   const [paidBy, setPaidBy] = useState(PAID_BY[0])
   const [payNote, setPayNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [expandedId, setExpandedId] = useState('')  // ledger line whose charge breakup is open
   const openEdit = (l) => {
     const e0 = entries.list.find(x => x.id === l.id); if (!e0) return
     const rows = active(entries.list).filter(e => e.batchId === e0.batchId)
@@ -50,6 +51,13 @@ export default function Hisab({ owner = false, by = '' }) {
   const style = levelStyle(level)
 
   const options = [{ value: '', label: 'Select gaadiwala' }, ...tList.map(t => ({ value: t.id, label: t.name }))]
+
+  // Charge breakup of one freight line (display-only; nonzero parts).
+  const breakupParts = (l) => [
+    ['Freight', l.freight], ['Bilti Charge', l.lrCharge], ['Labour', l.unloading], ['Misc', l.misc], ['Extra Point', l.extraPoint],
+  ].filter(([, v]) => Number(v) > 0)
+  const freightLines = lines.filter(l => l.kind === 'freight')
+  const chakkarCount = new Set(freightLines.map(l => l.batchId || l.id)).size
 
   const doShare = (finalLines = lines, finalTotals = totals) => {
     if (!transporter) return
@@ -189,21 +197,39 @@ export default function Hisab({ owner = false, by = '' }) {
           </Card>
 
           <Card className="p-0 overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 font-bold text-slate-700 text-sm">Ledger</div>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <span className="font-bold text-slate-700 text-sm">Ledger</span>
+              {chakkarCount > 0 && <span className="text-xs text-slate-400">{chakkarCount} chakkar · tap a line for breakup</span>}
+            </div>
             {lines.length === 0 ? (
               <div className="p-6 text-center text-slate-400 text-sm">No activity yet.</div>
             ) : (
               <div className="divide-y divide-slate-100">
                 {[...lines].reverse().map(l => (
-                  <div key={l.id} className="px-4 py-3 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-slate-800 truncate">
-                        {l.kind === 'opening' ? 'Brought forward' : l.kind === 'advance' ? `Advance${l.paidBy ? ' · ' + l.paidBy : ''}` : `${l.challanNo ? fmtChallan(l.challanNo) + ' · ' : ''}${destName(l.destinationId)}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`}
+                  <div key={l.id}>
+                    <div className="px-4 py-3 flex items-center gap-3"
+                      onClick={l.kind === 'freight' ? () => setExpandedId(expandedId === l.id ? '' : l.id) : undefined}>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-slate-800 truncate">
+                          {l.kind === 'opening' ? 'Brought forward' : l.kind === 'advance' ? `Advance${l.paidBy ? ' · ' + l.paidBy : ''}` : `${l.challanNo ? fmtChallan(l.challanNo) + ' · ' : ''}${destName(l.destinationId)}${l.gaadiNumber ? ' · ' + l.gaadiNumber : ''}`}
+                        </div>
+                        <div className="text-xs text-slate-400">{l.kind === 'opening' ? 'from last hisab' : fmtDate(l.date)}{l.kind === 'freight' && l.bags ? ` · ${l.bags} bags` : ''}{l.kind === 'advance' && l.note ? ` · ${l.note}` : ''}</div>
                       </div>
-                      <div className="text-xs text-slate-400">{l.kind === 'opening' ? 'from last hisab' : fmtDate(l.date)}{l.kind === 'freight' && l.bags ? ` · ${l.bags} bags` : ''}{l.kind === 'advance' && l.note ? ` · ${l.note}` : ''}</div>
+                      <div className={`text-sm font-bold font-mono ${l.kind === 'advance' ? 'text-emerald-600' : 'text-slate-800'}`}>{l.kind === 'advance' ? '−' : '+'}₹{fmtNum(l.amount)}</div>
+                      {l.kind === 'freight' && <button onClick={(ev) => { ev.stopPropagation(); openEdit(l) }} className="text-xs font-bold text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5">Edit</button>}
                     </div>
-                    <div className={`text-sm font-bold font-mono ${l.kind === 'advance' ? 'text-emerald-600' : 'text-slate-800'}`}>{l.kind === 'advance' ? '−' : '+'}₹{fmtNum(l.amount)}</div>
-                    {l.kind === 'freight' && <button onClick={() => openEdit(l)} className="text-xs font-bold text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5">Edit</button>}
+                    {l.kind === 'freight' && expandedId === l.id && (
+                      <div className="px-4 pb-3 -mt-1">
+                        <div className="bg-slate-50 rounded-xl p-3 text-xs space-y-1.5">
+                          {breakupParts(l).map(([name, v]) => (
+                            <div key={name} className="flex justify-between"><span className="text-slate-500">{name}</span><span className="font-bold font-mono text-slate-700">₹{fmtNum(v)}</span></div>
+                          ))}
+                          <div className="flex justify-between border-t border-slate-200 pt-1.5"><span className="text-slate-600 font-bold">Total</span><span className="font-bold font-mono text-slate-800">₹{fmtNum(l.amount)}</span></div>
+                          {l.pvtMarka ? <div className="text-slate-400">Pvt Marka: {l.pvtMarka}</div> : null}
+                          {l.remarks ? <div className="text-slate-400">{l.remarks}</div> : null}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

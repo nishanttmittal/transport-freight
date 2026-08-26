@@ -128,7 +128,12 @@ export function ledgerLines(entries, advances, transporterId, opts = {}) {
   const rows = []
   for (const e of (entries || [])) {
     if (e.transporterId !== transporterId || !countsInHisab(e) || !inRange(e.date)) continue
-    rows.push({ id: e.id, date: e.date, kind: 'freight', challanNo: num(e.challanNo), destinationId: e.destinationId, gaadiNumber: e.gaadiNumber, bags: num(e.bags), amount: entryTotal(e), debit: entryTotal(e), credit: 0, _s: e.createdAt || '' })
+    rows.push({
+      id: e.id, date: e.date, kind: 'freight', challanNo: num(e.challanNo), destinationId: e.destinationId, gaadiNumber: e.gaadiNumber, bags: num(e.bags), amount: entryTotal(e), debit: entryTotal(e), credit: 0,
+      // charge breakup (display-only — totals still come from entryTotal)
+      freight: num(e.freight), lrCharge: num(e.lrCharge), unloading: num(e.unloading), misc: num(e.misc), extraPoint: num(e.extraPoint), pvtMarka: e.pvtMarka || '', remarks: e.remarks || '', batchId: e.batchId || '',
+      _s: e.createdAt || '',
+    })
   }
   for (const a of (advances || [])) {
     if (a.transporterId !== transporterId || a.reversed || a.deleted || !inRange(a.date)) continue
