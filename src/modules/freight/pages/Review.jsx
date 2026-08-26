@@ -36,11 +36,17 @@ function groupBatches(rows) {
 }
 
 export default function Review({ owner = false, by = '', level = '' }) {
-  const { transporters, entries, settlements, logs, log, allocateNumber } = useFreight()
+  const { transporters, destinations, entries, settlements, logs, log, allocateNumber } = useFreight()
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState('')  // batchId whose drop-wise breakup is open
 
   const tName = (id, snap) => snap || transporters.list.find(t => t.id === id)?.name || '—'
+  const destName = (id) => (destinations.list.find(d => d.id === id)?.name) || '—'
+  // Charge breakup of one drop (display-only; nonzero parts).
+  const breakupParts = (r) => [
+    ['Freight', r.freight], ['Bilti Charge', r.lrCharge], ['Labour', r.unloading], ['Misc', r.misc], ['Extra Point', r.extraPoint],
+  ].filter(([, v]) => Number(v) > 0)
   const audit = (a) => logs.insert(auditLine(a.action, { ...a, device: navigator.userAgent }))
   const live = (entries.list || []).filter(e => !e.deleted)
 
@@ -106,13 +112,30 @@ export default function Review({ owner = false, by = '', level = '' }) {
 
   const Row = ({ b, children }) => (
     <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3" onClick={() => setExpanded(expanded === b.batchId ? '' : b.batchId)}>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold text-slate-800 truncate">{tName(b.transporterId, b.transporterName)}{b.gaadiNumber ? ` · ${b.gaadiNumber}` : ''}</div>
           <div className="text-xs text-slate-400">{b.challanNo ? fmtChallan(b.challanNo) + ' · ' : ''}{fmtDate(b.date)} · {b.rows.length} drop{b.rows.length > 1 ? 's' : ''}</div>
         </div>
         <div className="text-sm font-bold font-mono text-slate-800">₹{fmtNum(b.total)}</div>
       </div>
+      {expanded === b.batchId && (
+        <div className="mt-2 bg-slate-50 rounded-xl p-3 space-y-2 text-xs">
+          {b.rows.map((r, i) => (
+            <div key={r.id} className={i ? 'border-t border-slate-200 pt-2 space-y-1' : 'space-y-1'}>
+              <div className="flex justify-between font-semibold text-slate-700">
+                <span>{destName(r.destinationId)}{Number(r.bags) > 0 ? ` · ${r.bags} bags` : ''}</span>
+                <span className="font-mono">₹{fmtNum(entryTotal(r))}</span>
+              </div>
+              {breakupParts(r).map(([name, v]) => (
+                <div key={name} className="flex justify-between text-slate-500"><span>{name}</span><span className="font-mono">₹{fmtNum(v)}</span></div>
+              ))}
+              {r.pvtMarka ? <div className="text-slate-400">Pvt Marka: {r.pvtMarka}</div> : null}
+              {r.remarks ? <div className="text-slate-400">{r.remarks}</div> : null}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex gap-2 mt-2">{children}</div>
     </div>
   )
@@ -122,7 +145,10 @@ export default function Review({ owner = false, by = '', level = '' }) {
       <Toast msg={msg} />
 
       <Card className="p-0 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 font-bold text-slate-700 text-sm">Pending review ({pending.length})</div>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <span className="font-bold text-slate-700 text-sm">Pending review ({pending.length})</span>
+          {pending.length > 0 && <span className="text-xs text-slate-400">tap a chakkar for breakup</span>}
+        </div>
         {pending.length === 0 ? (
           <div className="p-6 text-center text-slate-400 text-sm">Nothing pending. (Gaadiwala submissions arrive here once logins are on.)</div>
         ) : (
@@ -139,7 +165,10 @@ export default function Review({ owner = false, by = '', level = '' }) {
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 font-bold text-slate-700 text-sm">Recent chakkars</div>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <span className="font-bold text-slate-700 text-sm">Recent chakkars</span>
+          {passed.length > 0 && <span className="text-xs text-slate-400">tap a chakkar for breakup</span>}
+        </div>
         {passed.length === 0 ? (
           <div className="p-6 text-center text-slate-400 text-sm">No chakkars yet.</div>
         ) : (
