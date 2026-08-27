@@ -23,7 +23,7 @@ const emptyDrop = () => ({ destinationId: '', bags: '', pvtMarka: '', freight: '
 
 const dropFromRow = (r) => ({ destinationId: r.destinationId || '', bags: r.bags ? String(r.bags) : '', pvtMarka: r.pvtMarka || '', freight: r.freight ? String(r.freight) : '', lrCharge: r.lrCharge ? String(r.lrCharge) : '', unloading: r.unloading ? String(r.unloading) : '', misc: r.misc ? String(r.misc) : '', extraPoint: r.extraPoint ? String(r.extraPoint) : '', remarks: r.remarks || '' })
 
-export default function Entry({ by = '', level = '', pendingMode = false, lockTransporterId = '', lockTransporterName = '', editBatch = null, ownerEdit = false, onDone = null }) {
+export default function Entry({ by = '', level = '', pendingMode = false, lockTransporterId = '', lockTransporterName = '', editBatch = null, ownerEdit = false, staffEdit = false, onDone = null }) {
   const { transporters, destinations, entries, settlements, lastUsed, logs, log, outbox } = useFreight()
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
@@ -121,11 +121,15 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
         if (ownerEdit) {
           log('entry.edit', `${fmtChallan(batchChallan)} ${fmtDate(veh.date)} Δ₹${delta}`, by, editBatch[0].batchId)
           logs.insert(auditLine('entry.edit', { by, role: level, before: { total: oldTotal }, after: { total: newTotal }, device: navigator.userAgent }))
+        } else if (staffEdit) {
+          // Manager corrected a chakkar still awaiting approval — stays pending, no balance move.
+          log('entry.staffEdit', `${gName} ${fmtDate(veh.date)} ₹${oldTotal}→₹${newTotal}`, by, editBatch[0].batchId)
+          logs.insert(auditLine('entry.staffEdit', { by, role: level, before: { total: oldTotal }, after: { total: newTotal }, device: navigator.userAgent }))
         } else {
           log('entry.resubmit', `${gName} ${fmtDate(veh.date)}`, by, editBatch[0].batchId)
           logs.insert(auditLine('entry.resubmit', { by, role: level, after: { batchId: editBatch[0].batchId }, device: navigator.userAgent }))
         }
-        show(res.uploaded ? (ownerEdit ? 'Entry updated ✓' : 'Resubmitted for approval ✓') : 'Saved on your phone ✓ — will apply when online', 2600)
+        show(res.uploaded ? (ownerEdit || staffEdit ? 'Chakkar updated ✓' : 'Resubmitted for approval ✓') : 'Saved on your phone ✓ — will apply when online', 2600)
         onDone && onDone()
       } catch { show('Could not save — check internet and try again', 2600) } finally { setBusy(false) }
       return
@@ -192,8 +196,8 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
       <Card className="p-4 space-y-4">
         {pendingMode || editing ? (
           <div className="flex items-center justify-between bg-indigo-600 text-white rounded-2xl px-4 py-3">
-            <span className="text-xs uppercase tracking-wide text-indigo-200 font-bold">{editing ? (ownerEdit ? 'Edit trip' : 'Editing chakkar') : 'New trip'}</span>
-            <span className="text-sm font-bold font-mono">{ownerEdit ? fmtChallan(editBatch[0].challanNo) : 'Sent for approval'}</span>
+            <span className="text-xs uppercase tracking-wide text-indigo-200 font-bold">{editing ? (ownerEdit || staffEdit ? 'Edit chakkar' : 'Editing chakkar') : 'New trip'}</span>
+            <span className="text-sm font-bold font-mono">{ownerEdit ? fmtChallan(editBatch[0].challanNo) : staffEdit ? 'Awaiting approval' : 'Sent for approval'}</span>
           </div>
         ) : (
           <div className="flex items-center justify-between bg-slate-800 text-white rounded-2xl px-4 py-3">
@@ -275,7 +279,7 @@ export default function Entry({ by = '', level = '', pendingMode = false, lockTr
             <div className="text-2xl font-bold text-slate-800 font-mono">₹{fmtNum(grandTotal)}</div>
           </div>
           {editing && <Button size="lg" variant="neutral" onClick={() => onDone && onDone()} disabled={busy}>Cancel</Button>}
-          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-6">{busy ? 'Saving…' : (pendingMode ? 'Submit' : editing ? (ownerEdit ? 'Save' : 'Resubmit') : 'Save')}</Button>
+          <Button size="lg" variant="success" onClick={save} disabled={busy} className="px-6">{busy ? 'Saving…' : (pendingMode ? 'Submit' : editing ? (ownerEdit || staffEdit ? 'Save' : 'Resubmit') : 'Save')}</Button>
         </div>
       </div>
     </div>

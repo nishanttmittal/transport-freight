@@ -13,6 +13,7 @@ import { applyTransition, STATUS } from '../logic/status'
 import { auditLine } from '../logic/audit'
 import { balanceHint } from '../logic/balance'
 import { fmtChallan } from '../config'
+import Entry from './Entry'
 
 /** Group rows by batchId into chakkar objects. */
 function groupBatches(rows) {
@@ -40,6 +41,7 @@ export default function Review({ owner = false, by = '', level = '' }) {
   const { msg, show } = useToast()
   const [busy, setBusy] = useState(false)
   const [expanded, setExpanded] = useState('')  // batchId whose drop-wise breakup is open
+  const [editBatch, setEditBatch] = useState(null)  // chakkar being corrected before approval
 
   const tName = (id, snap) => snap || transporters.list.find(t => t.id === id)?.name || '—'
   const destName = (id) => (destinations.list.find(d => d.id === id)?.name) || '—'
@@ -136,9 +138,17 @@ export default function Review({ owner = false, by = '', level = '' }) {
           ))}
         </div>
       )}
-      <div className="flex gap-2 mt-2">{children}</div>
+      <div className="flex flex-wrap gap-2 mt-2">{children}</div>
     </div>
   )
+
+  // Correcting a chakkar that is still awaiting approval: it stays pending and
+  // moves no balance, so the fix needs no adjustment entry — Pass it afterwards.
+  if (editBatch) {
+    return <Entry editBatch={editBatch} staffEdit lockTransporterId={editBatch[0].transporterId}
+      lockTransporterName={tName(editBatch[0].transporterId, editBatch[0].transporterName)}
+      by={by} level={level} onDone={() => setEditBatch(null)} />
+  }
 
   return (
     <div className="max-w-lg mx-auto p-4 space-y-4">
@@ -156,6 +166,7 @@ export default function Review({ owner = false, by = '', level = '' }) {
             {pending.map(b => (
               <Row key={b.batchId} b={b}>
                 <Button size="sm" variant="success" disabled={busy} onClick={() => doPass(b)}>Pass</Button>
+                <Button size="sm" variant="primary" disabled={busy} onClick={() => setEditBatch(b.rows)}>Edit</Button>
                 <Button size="sm" variant="neutral" disabled={busy} onClick={() => doReasoned(b, 'return', 'Return to gaadiwala — reason?', 'Returned')}>Return</Button>
                 <Button size="sm" variant="danger" disabled={busy} onClick={() => doReasoned(b, 'void', 'Void this chakkar — reason?', 'Voided')}>Void</Button>
               </Row>
