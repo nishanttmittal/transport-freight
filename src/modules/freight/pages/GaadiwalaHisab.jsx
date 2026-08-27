@@ -4,12 +4,14 @@
  * due. Data is filtered client-side to his transporterId (real DB isolation lands
  * in Stage 3 with the rules rewrite + scoped query).
  */
+import { useState } from 'react'
 import { Card, Button, useToast, Toast } from '../../../core/ui'
 import { fmtNum, fmtDate } from '../../../core/utils/format'
 import { useFreight } from '../FreightContext'
 import { entryTotal, transporterTotals, unsettledFrom, openingBalance } from '../logic/calc'
 import { STATUS } from '../logic/status'
 import { fmtChallan, fmtPayment } from '../config'
+import ChakkarBreakup from '../ChakkarBreakup'
 
 function groupBatches(rows) {
   const map = new Map()
@@ -22,33 +24,41 @@ function groupBatches(rows) {
   }))
 }
 
-function Chakkar({ b, tone = 'text-slate-800', children }) {
+function Chakkar({ b, destName, tone = 'text-slate-800', children }) {
+  const [open, setOpen] = useState(false)
   return (
     <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3" onClick={() => setOpen(o => !o)}>
         <div className="flex-1 min-w-0">
           <div className={`text-sm font-semibold truncate ${tone}`}>{b.challanNo ? fmtChallan(b.challanNo) + ' · ' : ''}{fmtDate(b.date)}{b.gaadiNumber ? ' · ' + b.gaadiNumber : ''}</div>
           <div className="text-xs text-slate-400">{b.rows.length} drop{b.rows.length > 1 ? 's' : ''}{b.reason ? ` · ${b.reason}` : ''}</div>
         </div>
         <div className="text-sm font-bold font-mono text-slate-800">₹{fmtNum(b.total)}</div>
       </div>
-      {children && <div className="flex gap-2 mt-2">{children}</div>}
+      {open && <div className="mt-2"><ChakkarBreakup rows={b.rows} destName={destName} /></div>}
+      {children && <div className="flex flex-wrap gap-2 mt-2">{children}</div>}
     </div>
   )
 }
 
-function Section({ title, count, children }) {
+function Section({ title, count, amount, children }) {
   return (
     <Card className="p-0 overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100 font-bold text-slate-700 text-sm">{title}{count ? ` (${count})` : ''}</div>
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+        <span className="font-bold text-slate-700 text-sm">{title}{count ? ` (${count})` : ''}</span>
+        {amount > 0 && <span className="text-sm font-bold font-mono text-slate-600">₹{fmtNum(amount)}</span>}
+      </div>
       {children}
     </Card>
   )
 }
 
+const sum = (list) => list.reduce((s, b) => s + b.total, 0)
+
 export default function GaadiwalaHisab({ transporterId, onEdit }) {
-  const { entries, advances, settlements } = useFreight()
+  const { entries, advances, settlements, destinations } = useFreight()
   const { msg, show } = useToast()
+  const destName = (id) => destinations.list.find(d => d.id === id)?.name || ''
 
   const from = unsettledFrom(settlements.list, transporterId)
   const opening = openingBalance(settlements.list, transporterId)   // carried-forward remainder from last settle
@@ -84,13 +94,14 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
         <div className="text-xs text-slate-500 uppercase tracking-wide font-bold">Balance due to you</div>
         <div className="text-3xl font-bold text-slate-800 font-mono mt-1">₹{fmtNum(balance)}</div>
         {from && <p className="text-[11px] text-slate-400 mt-2">This period (since last settlement {fmtDate(from)}).</p>}
+        <p className="text-[11px] text-slate-400 mt-1">Tap any chakkar to see its freight, bilti &amp; labour.</p>
       </Card>
 
       {needs.length > 0 && (
-        <Section title="⚠️ Needs correction" count={needs.length}>
+        <Section title="⚠️ Needs correction" count={needs.length} amount={sum(needs)}>
           <div className="divide-y divide-slate-100">
             {needs.map(b => (
-              <Chakkar key={b.batchId} b={b} tone="text-amber-700">
+              <Chakkar key={b.batchId} b={b} destName={destName} tone="text-amber-700">
                 <Button size="sm" variant="primary" onClick={() => onEdit(b.rows)}>Fix &amp; resubmit</Button>
                 <Button size="sm" variant="neutral" onClick={() => withdraw(b)}>Remove</Button>
               </Chakkar>
@@ -99,11 +110,11 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
         </Section>
       )}
 
-      <Section title="Waiting for approval" count={pending.length}>
+      <Section title="Waiting for approval" count={pending.length} amount={sum(pending)}>
         {pending.length === 0 ? <div className="p-5 text-center text-slate-400 text-sm">Nothing waiting.</div> : (
           <div className="divide-y divide-slate-100">
             {pending.map(b => (
-              <Chakkar key={b.batchId} b={b}>
+              <Chakkar key={b.batchId} b={b} destName={destName}>
                 <Button size="sm" variant="primary" onClick={() => onEdit(b.rows)}>Edit</Button>
                 <Button size="sm" variant="neutral" onClick={() => withdraw(b)}>Remove</Button>
               </Chakkar>
@@ -112,9 +123,9 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
         )}
       </Section>
 
-      <Section title="Approved" count={passed.length}>
+      <Section title="Approved" count={passed.length} amount={sum(passed)}>
         {passed.length === 0 ? <div className="p-5 text-center text-slate-400 text-sm">None yet.</div> : (
-          <div className="divide-y divide-slate-100">{passed.map(b => <Chakkar key={b.batchId} b={b} />)}</div>
+          <div className="divide-y divide-slate-100">{passed.map(b => <Chakkar key={b.batchId} b={b} destName={destName} />)}</div>
         )}
       </Section>
 
@@ -139,7 +150,7 @@ export default function GaadiwalaHisab({ transporterId, onEdit }) {
 
       {cancelled.length > 0 && (
         <Section title="Cancelled" count={cancelled.length}>
-          <div className="divide-y divide-slate-100 opacity-60">{cancelled.map(b => <Chakkar key={b.batchId} b={b} tone="text-slate-500" />)}</div>
+          <div className="divide-y divide-slate-100 opacity-60">{cancelled.map(b => <Chakkar key={b.batchId} b={b} destName={destName} tone="text-slate-500" />)}</div>
         </Section>
       )}
     </div>

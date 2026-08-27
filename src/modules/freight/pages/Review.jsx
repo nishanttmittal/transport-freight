@@ -14,6 +14,7 @@ import { auditLine } from '../logic/audit'
 import { balanceHint } from '../logic/balance'
 import { fmtChallan } from '../config'
 import Entry from './Entry'
+import ChakkarBreakup from '../ChakkarBreakup'
 
 /** Group rows by batchId into chakkar objects. */
 function groupBatches(rows) {
@@ -45,10 +46,6 @@ export default function Review({ owner = false, by = '', level = '' }) {
 
   const tName = (id, snap) => snap || transporters.list.find(t => t.id === id)?.name || '—'
   const destName = (id) => (destinations.list.find(d => d.id === id)?.name) || '—'
-  // Charge breakup of one drop (display-only; nonzero parts).
-  const breakupParts = (r) => [
-    ['Freight', r.freight], ['Bilti Charge', r.lrCharge], ['Labour', r.unloading], ['Misc', r.misc], ['Extra Point', r.extraPoint],
-  ].filter(([, v]) => Number(v) > 0)
   const audit = (a) => logs.insert(auditLine(a.action, { ...a, device: navigator.userAgent }))
   const live = (entries.list || []).filter(e => !e.deleted)
 
@@ -121,23 +118,7 @@ export default function Review({ owner = false, by = '', level = '' }) {
         </div>
         <div className="text-sm font-bold font-mono text-slate-800">₹{fmtNum(b.total)}</div>
       </div>
-      {expanded === b.batchId && (
-        <div className="mt-2 bg-slate-50 rounded-xl p-3 space-y-2 text-xs">
-          {b.rows.map((r, i) => (
-            <div key={r.id} className={i ? 'border-t border-slate-200 pt-2 space-y-1' : 'space-y-1'}>
-              <div className="flex justify-between font-semibold text-slate-700">
-                <span>{destName(r.destinationId)}{Number(r.bags) > 0 ? ` · ${r.bags} bags` : ''}</span>
-                <span className="font-mono">₹{fmtNum(entryTotal(r))}</span>
-              </div>
-              {breakupParts(r).map(([name, v]) => (
-                <div key={name} className="flex justify-between text-slate-500"><span>{name}</span><span className="font-mono">₹{fmtNum(v)}</span></div>
-              ))}
-              {r.pvtMarka ? <div className="text-slate-400">Pvt Marka: {r.pvtMarka}</div> : null}
-              {r.remarks ? <div className="text-slate-400">{r.remarks}</div> : null}
-            </div>
-          ))}
-        </div>
-      )}
+      {expanded === b.batchId && <div className="mt-2"><ChakkarBreakup rows={b.rows} destName={destName} /></div>}
       <div className="flex flex-wrap gap-2 mt-2">{children}</div>
     </div>
   )
